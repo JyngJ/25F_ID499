@@ -5,25 +5,27 @@ import path from 'path';
 import { createTranscription, textToSpeech } from './audio.js';
 import { askPillowMate } from './gpt_chat.js';
 import 'dotenv/config';
-import { runCommand, getDirname, sleep } from './utils.js'; // Import utilities
+import { runCommand, getDirname, sleep } from './utils.js'; // Import runCommand and getDirname
 
 // --------------------------------------------------
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
-const INPUT_FILE  = path.join(__dirname, 'assets', 'input.mp3');
+const INPUT_FILE_WAV  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
 const OUTPUT_FILE = path.join(__dirname, 'assets', 'reply.mp3');
 
 const INITIAL_PROMPT = 'How was your day?';
 
 let conversationHistory = []; // System prompt is now handled by askPillowMate
 
-
 // --------------------------------------------------
 async function recordInput() {
-  console.log('🎙 3초 녹음 시작...');
-  const cmd = `ffmpeg -y -f avfoundation -i ":0" -t 3 -ac 1 -ar 16000 "${INPUT_FILE}"`;
-  await runCommand(cmd);
-  console.log('✅ 녹음 완료');
+  console.log('🎙 음성 감지 및 녹음 시작 (SoX VAD)...');
+  // SoX (rec) 명령어를 사용하여 음성 활동 감지 및 녹음
+  // silence 1 0.1 3% : 0.1초 동안 3% 볼륨 이상의 소리가 감지되면 녹음 시작
+  // 1 2.0 3%        : 2.0초 동안 3% 볼륨 미만의 소리가 감지되면 녹음 종료
+  const recordCmd = `rec "${INPUT_FILE_WAV}" rate 16000 channels 1 silence 1 0.1 3% 1 5.0 3%`;
+  await runCommand(recordCmd);
+  console.log('✅ 녹음 완료:', INPUT_FILE_WAV);
 }
 
 
@@ -35,19 +37,25 @@ async function handleConversationTurn() {
   await recordInput();
 
   // STT
-  const userText = await createTranscription(INPUT_FILE, 'ko');
+  const userText = await createTranscription(INPUT_FILE_WAV, 'ko'); // Changed to WAV
   console.log('👤 User:', userText);
 
   // 유저 말 메모장에 추가
   conversationHistory.push({ role: 'user', content: userText });
 
   // GPT에게 '지금까지 대화 전체'를 보냄
-  const replyText = await askPillowMate(conversationHistory);
+  const gptResponse = await askPillowMate(conversationHistory);
+  const replyText = gptResponse.text;
+  const action = gptResponse.action;
+  const ledPattern = gptResponse.led_pattern;
 
-  // GPT 답변도 메모장에 추가
+  // GPT 답변도 메모장에 추가 (text만)
   conversationHistory.push({ role: 'assistant', content: replyText });
 
   console.log('🧠 PillowMate:', replyText);
+  console.log('Action:', action);
+  console.log('LED Pattern:', ledPattern);
+
 
   // TTS
   await textToSpeech(replyText, OUTPUT_FILE);
@@ -64,9 +72,16 @@ async function mainLoop() {
   console.log('🛏 PillowMate 시작됨. Ctrl + C 로 종료');
 
   // Initial prompt from PillowMate
-  conversationHistory.push({ role: 'assistant', content: INITIAL_PROMPT });
-  await textToSpeech(INITIAL_PROMPT, OUTPUT_FILE);
-  console.log('PillowMate:', INITIAL_PROMPT);
+  const initialGptResponse = await askPillowMate([{ role: 'user', content: INITIAL_PROMPT }]); // Initial prompt from PillowMate
+  const initialReplyText = initialGptResponse.text;
+  const initialAction = initialGptResponse.action;
+  const initialLedPattern = initialGptResponse.led_pattern;
+  
+  conversationHistory.push({ role: 'assistant', content: initialReplyText });
+  await textToSpeech(initialReplyText, OUTPUT_FILE);
+  console.log('PillowMate:', initialReplyText);
+  console.log('Action:', initialAction);
+  console.log('LED Pattern:', initialLedPattern);
   await runCommand(`afplay "${OUTPUT_FILE}"`);
 
 
@@ -85,3 +100,4 @@ async function mainLoop() {
 }
 
 mainLoop();
+

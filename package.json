@@ -7,8 +7,12 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@ricky0123/vad-node": "^0.0.3",
     "axios": "^1.12.2",
     "dotenv": "^17.2.3",
-    "openai": "^6.5.0"
+    "mic": "^2.1.2",
+    "onnxruntime-node": "^1.23.2",
+    "openai": "^6.5.0",
+    "wavefile": "^11.0.0"
   }
 }
