@@ -10,8 +10,8 @@ import { runCommand, getDirname, sleep } from './utils.js'; // Import runCommand
 // --------------------------------------------------
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
-const INPUT_FILE_WAV  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
-const OUTPUT_FILE = path.join(__dirname, 'assets', 'reply.mp3');
+const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
+const OUTPUT_AUDIO_PATH = path.join(__dirname, 'assets', 'reply.mp3');
 
 const INITIAL_PROMPT = 'How was your day?';
 
@@ -23,9 +23,9 @@ async function recordInput() {
   // SoX (rec) 명령어를 사용하여 음성 활동 감지 및 녹음
   // silence 1 0.1 3% : 0.1초 동안 3% 볼륨 이상의 소리가 감지되면 녹음 시작
   // 1 2.0 3%        : 2.0초 동안 3% 볼륨 미만의 소리가 감지되면 녹음 종료
-  const recordCmd = `rec "${INPUT_FILE_WAV}" rate 16000 channels 1 silence 1 0.1 3% 1 5.0 3%`;
+  const recordCmd = `rec "${INPUT_AUDIO_PATH}" rate 16000 channels 1 silence 1 0.1 3% 1 5.0 3%`;
   await runCommand(recordCmd);
-  console.log('✅ 녹음 완료:', INPUT_FILE_WAV);
+  console.log('✅ 녹음 완료:', INPUT_AUDIO_PATH);
 }
 
 
@@ -37,7 +37,7 @@ async function handleConversationTurn() {
   await recordInput();
 
   // STT
-  const userText = await createTranscription(INPUT_FILE_WAV, 'ko'); // Changed to WAV
+  const userText = await createTranscription(INPUT_AUDIO_PATH, 'ko'); // Changed to WAV
   console.log('👤 User:', userText);
 
   // 유저 말 메모장에 추가
@@ -58,10 +58,8 @@ async function handleConversationTurn() {
 
 
   // TTS
-  await textToSpeech(replyText, OUTPUT_FILE);
-
-  // 재생
-  await runCommand(`afplay "${OUTPUT_FILE}"`);
+  await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
+  await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
 }
 
 
@@ -78,11 +76,11 @@ async function mainLoop() {
   const initialLedPattern = initialGptResponse.led_pattern;
   
   conversationHistory.push({ role: 'assistant', content: initialReplyText });
-  await textToSpeech(initialReplyText, OUTPUT_FILE);
+  await textToSpeech(initialReplyText, OUTPUT_AUDIO_PATH);
   console.log('PillowMate:', initialReplyText);
   console.log('Action:', initialAction);
   console.log('LED Pattern:', initialLedPattern);
-  await runCommand(`afplay "${OUTPUT_FILE}"`);
+  await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
 
 
   while (true) {

@@ -16,8 +16,8 @@ import { runCommand, getDirname } from './utils.js'; // Import runCommand and ge
 // --------------------------------------------------
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
-const INPUT_FILE_WAV  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
-const OUTPUT_FILE = path.join(__dirname, 'assets', 'reply.mp3');
+const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
+const OUTPUT_AUDIO_PATH = path.join(__dirname, 'assets', 'reply.mp3');
 
 const INITIAL_PROMPT = 'How was your day?';
 
