@@ -1,0 +1,14 @@
+핵심 변경
+
+Velostat + MPU6050 값을 CSV로 내보내는 데이터 로거 스케치를 추가해 센서 테스트와 학습용 수집을 쉽게 했습니다 (arduino/action_module_data_logger/action_module_data_logger.ino (lines 1-79)).
+PC 측에서 라벨을 붙여가며 데이터를 모으고, 로지스틱 회귀 모델을 학습한 뒤 JSON과 Arduino 헤더로 내보내는 전체 파이프라인을 구성했습니다 (python/collect_data.py (lines 1-156), python/train_model.py (lines 1-238), python/requirements.txt (lines 1-4), arduino/action_module_inference/model_params.h (lines 1-61)).
+실시간 추론 스케치에 센서 융합, 이동 평균, 예측 결과 Serial/NeoPixel 표시를 구현해 바로 베개에 올릴 수 있도록 했습니다 (arduino/action_module_inference/action_module_inference.ino (lines 1-186)).
+작업 흐름, 하드웨어 요구 사항, 주의점 등을 README에 한국어 사용자도 이해하기 쉽게 정리했습니다 (README.md (lines 1-86)).
+테스트
+
+하드웨어·시리얼 장비가 필요해 실제 실행 테스트는 진행하지 못했습니다.
+다음 단계
+
+데이터 로거 스케치를 보드에 올리고 python/collect_data.py --port <포트>로 네 가지 동작을 충분히 기록하세요.
+python/train_model.py를 실행해 성능 리포트를 확인한 뒤 생성된 model_params.h를 사용해 추론 스케치를 다시 빌드/플래시하세요.
+예측이 불안정하면 더 많은 데이터를 모으거나 kSmoothingWindow, kPredictionIntervalMs 값을 조정해 노이즈를 줄여보세요.
