@@ -4,35 +4,41 @@
 
 export const config = {
   // Initial prompt for the PillowMate
-  initial_prompt: 'How was your day?',
+  initial_prompt: "How was your day?",
 
+  ///////////////////////////////////////////////////////////////////
+  // 이 부분 파라미터 곱셈 세팅에 문제가 있어 현재 일단 이 상태로 둡니다.
+  // 의도한 바와는 다르나 현재 발화는 0.2초간 1% 이상의 음성입력,
+  // 1초간 0.5% 이하의 침묵인 경우 종료로 인식되고 있는 것으로 보입니다.
+  // 추후 코드 확인하여 수정하겠습니다.
   // SoX VAD (Voice Activity Detection) parameters
   vad: {
-    // Recording starts after 0.1 seconds of sound at 3% volume
-    start_threshold_duration: '0.1',
-    start_threshold_volume: '3%',
-    // Recording stops after 2.0 seconds of silence at 3% volume
-    end_threshold_duration: '2.0',
-    end_threshold_volume: '3%',
-    // Maximum recording time
-    max_recording_time: '5.0'
+    // Recording starts after sound above threshold for start_threshold_duration (milliseconds)
+    start_threshold_duration: "20", // milliseconds
+    start_threshold_volume: "1%",
+    // Recording stops after silence below threshold for end_threshold_duration (milliseconds)
+    end_threshold_duration: "100000", // milliseconds
+    end_threshold_volume: "0.5%",
+    // Maximum recording time (milliseconds)
+    max_recording_time: "30000", // milliseconds
   },
+  ///////////////////////////////////////////////////////////////////
 
   // OpenAI API parameters
   openai: {
     // Text-to-Speech (TTS)
     tts: {
-      model: 'tts-1',
-      voice: 'nova'
+      model: "tts-1",
+      voice: "nova",
     },
     // Speech-to-Text (STT)
     stt: {
-      model: 'whisper-1',
-      language: 'ko'
+      model: "whisper-1",
+      language: "ko",
     },
     // GPT
     gpt: {
-      model: 'gpt-4o-mini'
-    }
-  }
+      model: "gpt-4o-mini",
+    },
+  },
 };

@@ -24,3 +24,14 @@ export function runCommand(cmd) {
 export function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+export async function checkDependency(command, installHint) {
+  try {
+    await runCommand(`${command} --help`); 
+    return true;
+  } catch (e) {
+    console.error(`\n❌ 필수 도구 '${command}'가 설치되지 않았거나 PATH에 없습니다.`);
+    if (installHint) console.error(`💡 설치 방법: ${installHint}\n`);
+    return false;
+  }
+}

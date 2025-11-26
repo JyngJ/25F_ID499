@@ -1,7 +1,7 @@
 // voice_chat.js
 // 전체 파이프라인:
 // STEP 0) PillowMate 질문 TTS → 재생
-// STEP 1) SoX(rec)를 이용한 실시간 녹음 → assets/input.wav
+// STEP 1) 녹음 (JS VAD) → assets/input.wav
 // STEP 2) Whisper(STT) → 텍스트
 // STEP 3) GPT → 답변 텍스트 + 행동/LED 제안
 // STEP 4) TTS → assets/reply.mp3
@@ -10,49 +10,56 @@
 import path from 'path';
 import { createTranscription, textToSpeech } from './audio.js';
 import { askPillowMate } from './gpt_chat.js';
+import { recordAudio } from './recorder.js';
 import 'dotenv/config';
-import { runCommand, getDirname } from './utils.js'; // Import runCommand and getDirname
+import { runCommand, getDirname, checkDependency } from './utils.js';
 import { config } from './config.js';
+import fs from 'fs';
 
 // --------------------------------------------------
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
-const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
+const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav');
 const OUTPUT_AUDIO_PATH = path.join(__dirname, 'assets', 'reply.mp3');
 
 const INITIAL_PROMPT = config.initial_prompt;
 
 // --------------------------------------------------
-async function recordInput() {
-  console.log('🎙 STEP 1) 음성 감지 및 녹음 시작 (SoX VAD)...');
-  // SoX (rec) 명령어를 사용하여 음성 활동 감지 및 녹음
-  // silence 1 [start_threshold_duration] [start_threshold_volume]% : [start_threshold_duration]초 동안 [start_threshold_volume]% 볼륨 이상의 소리가 감지되면 녹음 시작
-  // 1 [end_threshold_duration] [end_threshold_volume]%        : [end_threshold_duration]초 동안 [end_threshold_volume]% 볼륨 미만의 소리가 감지되면 녹음 종료
-  const recordCmd = `rec "${INPUT_AUDIO_PATH}" rate 16000 channels 1 silence 1 ${config.vad.start_threshold_duration} ${config.vad.start_threshold_volume} 1 ${config.vad.end_threshold_duration} ${config.vad.end_threshold_volume}`;
-  await runCommand(recordCmd);
-  console.log('✅ 녹음 완료:', INPUT_AUDIO_PATH);
-}
-
-// --------------------------------------------------
 async function main() {
   try {
+    // 의존성 확인
+    await checkDependency('rec', 'brew install sox (macOS) / conda install -c conda-forge sox');
+
     // ================================
     // STEP 0) PillowMate의 최초 질문
     // ================================
-    await textToSpeech(INITIAL_PROMPT, OUTPUT_AUDIO_PATH);
+    try {
+        await textToSpeech(INITIAL_PROMPT, OUTPUT_AUDIO_PATH);
+    } catch(e) { console.log('TTS Skip:', e.message); }
 
     console.log('PillowMate:', INITIAL_PROMPT);
     await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
 
     // ================================
-    // STEP 1) 녹음
+    // STEP 1) 녹음 (Visual VAD)
     // ================================
-    await recordInput();
+    // 이전 input.wav 파일 삭제
+    if (fs.existsSync(INPUT_AUDIO_PATH)) {
+      fs.unlinkSync(INPUT_AUDIO_PATH);
+    }
+    await recordAudio(INPUT_AUDIO_PATH, {
+        startThreshold: parseFloat(config.vad.start_threshold_volume) / 100.0,
+        endThreshold: parseFloat(config.vad.end_threshold_volume) / 100.0,
+        startThresholdDuration: parseFloat(config.vad.start_threshold_duration),
+        minSilenceDuration: parseFloat(config.vad.end_threshold_duration), // Removed * 1000
+        maxDuration: parseFloat(config.vad.max_recording_time) // Removed * 1000
+    });
+    console.log('✅ 녹음 완료:', INPUT_AUDIO_PATH);
 
     // ================================
     // STEP 2) STT
     // ================================
-    const userText = await createTranscription(INPUT_AUDIO_PATH, 'ko'); // Changed to WAV
+    const userText = await createTranscription(INPUT_AUDIO_PATH, 'ko'); 
     console.log('User:', userText);
 
     // ================================

@@ -1,44 +1,46 @@
-// voice_chat.js
+// voice_chat_loop.js
 // 센서 없이 계속 대화하는 PillowMate 루프 버전
 
 import path from 'path';
 import { createTranscription, textToSpeech } from './audio.js';
 import { askPillowMate } from './gpt_chat.js';
+import { recordAudio } from './recorder.js';
 import 'dotenv/config';
-import { runCommand, getDirname, sleep } from './utils.js'; // Import runCommand and getDirname
+import { runCommand, getDirname, sleep, checkDependency } from './utils.js'; // Import updated utils
 import { config } from './config.js';
+import fs from 'fs';
 
 // --------------------------------------------------
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
-const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav'); // Changed to WAV
+const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav');
 const OUTPUT_AUDIO_PATH = path.join(__dirname, 'assets', 'reply.mp3');
 
 const INITIAL_PROMPT = config.initial_prompt;
 
 let conversationHistory = []; // System prompt is now handled by askPillowMate
 
-// --------------------------------------------------
-async function recordInput() {
-  console.log('🎙 음성 감지 및 녹음 시작 (SoX VAD)...');
-  // SoX (rec) 명령어를 사용하여 음성 활동 감지 및 녹음
-  // silence 1 [start_threshold_duration] [start_threshold_volume]% : [start_threshold_duration]초 동안 [start_threshold_volume]% 볼륨 이상의 소리가 감지되면 녹음 시작
-  // 1 [end_threshold_duration] [end_threshold_volume]%        : [end_threshold_duration]초 동안 [end_threshold_volume]% 볼륨 미만의 소리가 감지되면 녹음 종료
-  const recordCmd = `rec "${INPUT_AUDIO_PATH}" rate 16000 channels 1 silence 1 ${config.vad.start_threshold_duration} ${config.vad.start_threshold_volume} 1 ${config.vad.end_threshold_duration} ${config.vad.end_threshold_volume}`;
-  await runCommand(recordCmd);
-  console.log('✅ 녹음 완료:', INPUT_AUDIO_PATH);
-}
-
 
 // --------------------------------------------------
 // ✅ 한 번의 “대화 사이클”만 담당하는 함수
 // --------------------------------------------------
 async function handleConversationTurn() {
+  // 이전 input.wav 파일 삭제
+  if (fs.existsSync(INPUT_AUDIO_PATH)) {
+    fs.unlinkSync(INPUT_AUDIO_PATH);
+  }
   // 녹음
-  await recordInput();
+  await recordAudio(INPUT_AUDIO_PATH, {
+    startThreshold: parseFloat(config.vad.start_threshold_volume) / 100.0,
+    endThreshold: parseFloat(config.vad.end_threshold_volume) / 100.0,
+    startThresholdDuration: parseFloat(config.vad.start_threshold_duration),
+    minSilenceDuration: parseFloat(config.vad.end_threshold_duration), // Removed * 1000
+    maxDuration: parseFloat(config.vad.max_recording_time) // Removed * 1000
+  });
 
   // STT
-  const userText = await createTranscription(INPUT_AUDIO_PATH, 'ko'); // Changed to WAV
+  console.log('Transcribing...');
+  const userText = await createTranscription(INPUT_AUDIO_PATH, 'ko');
   console.log('👤 User:', userText);
 
   // 유저 말 메모장에 추가
@@ -70,17 +72,17 @@ async function handleConversationTurn() {
 async function mainLoop() {
   console.log('🛏 PillowMate 시작됨. Ctrl + C 로 종료');
 
+  // 의존성 확인
+  await checkDependency('rec', 'brew install sox (macOS) / conda install -c conda-forge sox');
+
   // Initial prompt from PillowMate
-  const initialGptResponse = await askPillowMate([{ role: 'user', content: INITIAL_PROMPT }]); // Initial prompt from PillowMate
-  const initialReplyText = initialGptResponse.text;
-  const initialAction = initialGptResponse.action;
-  const initialLedPattern = initialGptResponse.led_pattern;
+  try {
+      await textToSpeech(INITIAL_PROMPT, OUTPUT_AUDIO_PATH);
+  } catch(e) { console.log('TTS Skip:', e.message); }
+
   
-  conversationHistory.push({ role: 'assistant', content: initialReplyText });
-  await textToSpeech(initialReplyText, OUTPUT_AUDIO_PATH);
-  console.log('PillowMate:', initialReplyText);
-  console.log('Action:', initialAction);
-  console.log('LED Pattern:', initialLedPattern);
+  conversationHistory.push({ role: 'assistant', content: INITIAL_PROMPT });
+  console.log('PillowMate:', INITIAL_PROMPT);
   await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
 
 
@@ -99,4 +101,3 @@ async function mainLoop() {
 }
 
 mainLoop();
-
