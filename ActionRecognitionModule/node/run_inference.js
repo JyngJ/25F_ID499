@@ -39,6 +39,7 @@ program
   )
   .option("--baseline-samples <count>", "Samples to estimate the resting pressure baseline", (value) => parseInt(value, 10), 200)
   .option("--min-prob <value>", "Only log predictions above this probability", (value) => parseFloat(value), 0.5)
+  .option("--idle-label <name>", "Label that represents the resting/idle state", "idle")
   .option("--verbose", "Print the averaged feature vector before each prediction", false);
 
 const options = program.parse(process.argv).opts();
@@ -144,8 +145,16 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
   return baseline;
 }
 
+let lastStatusLength = 0;
+function renderStatus(line) {
+  const padded = line.padEnd(lastStatusLength);
+  process.stdout.write(`\r${padded}`);
+  lastStatusLength = Math.max(line.length, lastStatusLength);
+}
+
 const model = loadModel(options.model);
 const featureCount = model.feature_mean.length;
+const idleLabel = options.idleLabel?.trim() || null;
 
 const SERIAL_PORT = process.env.SERIAL_PORT?.trim();
 const boardOptions = { repl: false };
@@ -167,6 +176,7 @@ function shutdown(code = 0) {
   } catch (_) {
     /* noop */
   }
+  process.stdout.write("\n");
   process.exit(code);
 }
 
@@ -217,7 +227,7 @@ board.on("ready", async () => {
     console.log("실시간 추론을 시작합니다. 상호작용을 수행해 주세요.");
 
     const window = [];
-    let lastPrediction = null;
+    let lastActiveLabel = "대기중";
 
     board.loop(options.sampleMs, () => {
       if (latestPressure == null || latestAccel == null || latestGyro == null) {
@@ -252,13 +262,32 @@ board.on("ready", async () => {
           `평균 특징값: ${averaged.map((value) => value.toFixed(3)).join(", ")}`,
         );
       }
-      if (
-        prediction.probability >= options.minProb &&
-        (!lastPrediction || prediction.index !== lastPrediction.index || prediction.probability > lastPrediction.probability + 0.05)
-      ) {
+      const probabilityPct = (prediction.probability * 100).toFixed(1);
+      const isIdlePrediction = idleLabel && prediction.label === idleLabel;
+      const isConfidentAction = prediction.probability >= options.minProb && !isIdlePrediction;
+      const stateLabel = isConfidentAction ? prediction.label : "대기중";
+
+      let statusLine;
+      if (isConfidentAction) {
+        statusLine = `현재 동작: ${prediction.label} (${probabilityPct}%)`;
+      } else if (isIdlePrediction) {
+        statusLine = `현재 동작: 대기중 (${idleLabel} ${probabilityPct}%)`;
+      } else {
+        statusLine = `현재 동작: 대기중 (신뢰도 ${probabilityPct}%)`;
+      }
+      renderStatus(statusLine);
+
+      if (stateLabel !== lastActiveLabel) {
         const timestamp = new Date().toLocaleTimeString();
-        console.log(`[${timestamp}] ${prediction.label} (${(prediction.probability * 100).toFixed(1)}%)`);
-        lastPrediction = prediction;
+        let detail = ` (${probabilityPct}%)`;
+        if (isIdlePrediction) {
+          detail = ` (${idleLabel} ${probabilityPct}%)`;
+        } else if (!isConfidentAction) {
+          detail = ` (신뢰도 ${probabilityPct}%)`;
+        }
+        process.stdout.write(`\n[${timestamp}] 상태 변경: ${stateLabel}${detail}\n`);
+        renderStatus(statusLine);
+        lastActiveLabel = stateLabel;
       }
     });
   } catch (err) {

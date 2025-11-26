@@ -24,7 +24,7 @@ const MODULE_ROOT = path.resolve(__dirname, "..");
 
 dotenv.config({ path: path.join(MODULE_ROOT, ".env") });
 
-const DEFAULT_LABELS = ["tap", "rest_head", "hug", "shake"];
+const DEFAULT_LABELS = ["idle", "tap", "rest_head", "hug", "shake"];
 const DEFAULT_OUTPUT_DIR = path.resolve(MODULE_ROOT, "data", "raw");
 const CSV_HEADER = [
   "timestamp_ms",
