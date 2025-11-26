@@ -10,7 +10,7 @@ import { runCommand, getDirname } from './utils.js'; // Import runCommand and ge
 const __dirname = getDirname(import.meta.url); // Use getDirname
 
 // 1) 입력/출력 파일 경로 설정
-const INPUT_FILE = "/Users/ijieun/Desktop/Interaction with AI/Project/audio code/w9-modalities/assets/input.mp3";   // 사용자가 말한 녹음
+const INPUT_FILE = path.join(__dirname, 'assets', 'input.mp3');   // 사용자가 말한 녹음
 const OUTPUT_FILE = path.join(__dirname, 'assets', 'reply.mp3');  // 베개가 말할 음성
 
 async function main() {
@@ -20,8 +20,13 @@ async function main() {
     console.log('User:', userText);
 
     console.log('2) GPT에게 보냄...');
-    const replyText = await askPillowMate([{ role: 'user', content: userText }]);
+    const gptResponse = await askPillowMate([{ role: 'user', content: userText }]);
+    const replyText = gptResponse.text;
+    const action = gptResponse.action;
+    const ledPattern = gptResponse.led_pattern;
     console.log('PillowMate:', replyText);
+    console.log('Action:', action);
+    console.log('LED Pattern:', ledPattern);
 
     console.log('3) TTS: GPT 답변을 음성으로 생성 중...');
     await textToSpeech(replyText, OUTPUT_FILE);
