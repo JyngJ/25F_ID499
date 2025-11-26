@@ -1,14 +1,16 @@
 핵심 변경
 
-Velostat + MPU6050 값을 CSV로 내보내는 데이터 로거 스케치를 추가해 센서 테스트와 학습용 수집을 쉽게 했습니다 (arduino/action_module_data_logger/action_module_data_logger.ino (lines 1-79)).
-PC 측에서 라벨을 붙여가며 데이터를 모으고, 로지스틱 회귀 모델을 학습한 뒤 JSON과 Arduino 헤더로 내보내는 전체 파이프라인을 구성했습니다 (python/collect_data.py (lines 1-156), python/train_model.py (lines 1-238), python/requirements.txt (lines 1-4), arduino/action_module_inference/model_params.h (lines 1-61)).
-실시간 추론 스케치에 센서 융합, 이동 평균, 예측 결과 Serial/NeoPixel 표시를 구현해 바로 베개에 올릴 수 있도록 했습니다 (arduino/action_module_inference/action_module_inference.ino (lines 1-186)).
-작업 흐름, 하드웨어 요구 사항, 주의점 등을 README에 한국어 사용자도 이해하기 쉽게 정리했습니다 (README.md (lines 1-86)).
+- 기존 .ino 의존 파이프라인을 제거하고, StandardFirmata + Johnny-Five 조합으로 호스트에서 센서를 직접 제어하도록 전면 개편했습니다 (node/collect_data.js, node/run_inference.js).
+- collect_data.js는 라벨 안내/압력 베이스라인/CSV 저장을 모두 자동화해 `data/raw/*.csv`를 곧바로 학습에 쓸 수 있습니다.
+- train_model.py는 더 이상 Arduino 헤더를 생성하지 않고, run_inference.js가 읽을 JSON만 출력하도록 단순화했습니다 (requirements.txt에서 pyserial 제거).
+- README와 본 메모를 새로운 워크플로(펌웨어 준비 → Node 수집 → Python 학습 → Node 추론)에 맞춰 갱신했습니다.
+
 테스트
 
-하드웨어·시리얼 장비가 필요해 실제 실행 테스트는 진행하지 못했습니다.
+- Johnny-Five 스크립트는 하드웨어 없이 논리 검토만 진행했습니다. 실제 보드 연결/StandardFirmata 환경에서 실행 검증이 필요합니다.
+
 다음 단계
 
-데이터 로거 스케치를 보드에 올리고 python/collect_data.py --port <포트>로 네 가지 동작을 충분히 기록하세요.
-python/train_model.py를 실행해 성능 리포트를 확인한 뒤 생성된 model_params.h를 사용해 추론 스케치를 다시 빌드/플래시하세요.
-예측이 불안정하면 더 많은 데이터를 모으거나 kSmoothingWindow, kPredictionIntervalMs 값을 조정해 노이즈를 줄여보세요.
+1. Arduino IDE에서 StandardFirmata를 보드에 올리고, `npm install` 로 의존성을 설치하세요.
+2. `node node/collect_data.js` 로 라벨별 데이터를 충분히 수집한 뒤 `python/train_model.py` 로 학습합니다.
+3. `node node/run_inference.js --model models/model_params.json` 으로 실시간 추론을 돌리고, 필요하면 `--window-size`, `--min-prob` 등을 조정해 안정화하세요.
