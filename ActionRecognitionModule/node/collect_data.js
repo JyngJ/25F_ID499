@@ -14,12 +14,15 @@ import readline from "readline";
 import { fileURLToPath } from "url";
 import five from "johnny-five";
 import { Command } from "commander";
+import dotenv from "dotenv";
 
 const { Board, Sensor, IMU } = five;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MODULE_ROOT = path.resolve(__dirname, "..");
+
+dotenv.config({ path: path.join(MODULE_ROOT, ".env") });
 
 const DEFAULT_LABELS = ["tap", "rest_head", "hug", "shake"];
 const DEFAULT_OUTPUT_DIR = path.resolve(MODULE_ROOT, "data", "raw");
@@ -63,7 +66,14 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-const board = new Board({ repl: false });
+const SERIAL_PORT = process.env.SERIAL_PORT?.trim();
+const boardOptions = { repl: false };
+if (SERIAL_PORT) {
+  console.log(`SERIAL_PORT 환경 변수 감지: ${SERIAL_PORT}`);
+  boardOptions.port = SERIAL_PORT;
+}
+
+const board = new Board(boardOptions);
 let isShuttingDown = false;
 
 function ask(question) {

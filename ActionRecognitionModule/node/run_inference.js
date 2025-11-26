@@ -12,6 +12,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import five from "johnny-five";
 import { Command } from "commander";
+import dotenv from "dotenv";
 
 const { Board, Sensor, IMU } = five;
 
@@ -19,6 +20,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const MODULE_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_MODEL_PATH = path.resolve(MODULE_ROOT, "models", "model_params.json");
+
+dotenv.config({ path: path.join(MODULE_ROOT, ".env") });
 
 const program = new Command();
 program
@@ -144,7 +147,14 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
 const model = loadModel(options.model);
 const featureCount = model.feature_mean.length;
 
-const board = new Board({ repl: false });
+const SERIAL_PORT = process.env.SERIAL_PORT?.trim();
+const boardOptions = { repl: false };
+if (SERIAL_PORT) {
+  console.log(`SERIAL_PORT 환경 변수 감지: ${SERIAL_PORT}`);
+  boardOptions.port = SERIAL_PORT;
+}
+
+const board = new Board(boardOptions);
 let shuttingDown = false;
 
 function shutdown(code = 0) {

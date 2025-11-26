@@ -35,6 +35,21 @@ models/
 
 ## 1. 데이터 수집 (`node/collect_data.js`)
 
+**Serial 포트 지정 (선택)**
+
+1. 보드를 USB에 연결한 뒤 리눅스에서 포트를 확인합니다.
+   ```bash
+   ls /dev/ttyACM*
+   # 또는
+   ls /dev/ttyUSB*
+   # 상세 확인: dmesg | grep tty
+   ```
+2. 확인한 경로를 `ActionRecognitionModule/.env` 파일에 작성합니다.
+   ```
+   SERIAL_PORT=/dev/ttyACM0
+   ```
+   Node 기반 도구(`node/collect_data.js`, `node/run_inference.js`)가 자동으로 이 값을 사용해 특정 포트로 연결을 시도합니다.
+
 ```bash
 cd ActionRecognitionModule
 node node/collect_data.js \
