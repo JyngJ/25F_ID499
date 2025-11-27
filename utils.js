@@ -35,3 +35,21 @@ export async function checkDependency(command, installHint) {
     return false;
   }
 }
+
+// -----------------------------
+// Platform-aware helpers
+// -----------------------------
+
+export function buildRecordCommand(outputFile, silenceEffect, maxRecDuration) {
+  const isWindows = process.platform === 'win32';
+  const recorder = isWindows ? 'sox' : 'rec';
+  const device = isWindows ? '-t waveaudio -d' : '-d';
+  return `${recorder} -q -c 1 -r 16000 -b 16 ${device} "${outputFile}" ${silenceEffect} trim 0 ${maxRecDuration}`;
+}
+
+export function buildPlaybackCommand(filePath) {
+  if (process.platform === 'win32') {
+    return `sox "${filePath}" -t waveaudio`;
+  }
+  return `afplay "${filePath}"`;
+}

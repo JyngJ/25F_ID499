@@ -4,7 +4,7 @@ import path from 'path';
 import { createTranscription, textToSpeech } from './audio.js';
 import { askPillowMate } from './gpt_chat.js';
 import 'dotenv/config';
-import { runCommand, getDirname } from './utils.js'; // Import runCommand and getDirname
+import { buildPlaybackCommand, runCommand, getDirname } from './utils.js'; // Import helpers
 
 // ES module에서 __dirname 흉내 내기 (Node + import 문법일 때 필요)
 const __dirname = getDirname(import.meta.url); // Use getDirname
@@ -33,7 +33,7 @@ async function main() {
     console.log('reply.mp3 생성 완료:', OUTPUT_FILE);
 
     console.log('4) Mac 스피커로 재생');
-    await runCommand(`afplay "${OUTPUT_FILE}"`); // Use runCommand
+    await runCommand(buildPlaybackCommand(OUTPUT_FILE)); // Platform-aware playback
     console.log('재생 완료');
   } catch (err) {
     console.error('❌ Error!:', err);

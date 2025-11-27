@@ -6,7 +6,7 @@ import { createTranscription, textToSpeech } from './audio.js';
 import { askPillowMate } from './gpt_chat.js';
 import { recordAudio } from './recorder.js';
 import 'dotenv/config';
-import { runCommand, getDirname, sleep, checkDependency } from './utils.js'; // Import updated utils
+import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from './utils.js'; // Import updated utils
 import { config } from './config.js';
 import fs from 'fs';
 
@@ -62,7 +62,7 @@ async function handleConversationTurn() {
 
   // TTS
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
-  await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
+  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
 }
 
 
@@ -73,7 +73,7 @@ async function mainLoop() {
   console.log('🛏 PillowMate 시작됨. Ctrl + C 로 종료');
 
   // 의존성 확인
-  await checkDependency('rec', 'brew install sox (macOS) / conda install -c conda-forge sox');
+  await checkDependency(process.platform === 'win32' ? 'sox' : 'rec', 'brew install sox (macOS) / conda install -c conda-forge sox');
 
   // Initial prompt from PillowMate
   try {
@@ -83,7 +83,7 @@ async function mainLoop() {
   
   conversationHistory.push({ role: 'assistant', content: INITIAL_PROMPT });
   console.log('PillowMate:', INITIAL_PROMPT);
-  await runCommand(`afplay "${OUTPUT_AUDIO_PATH}"`);
+  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
 
 
   while (true) {

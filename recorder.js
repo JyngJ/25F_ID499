@@ -1,5 +1,5 @@
 import fs from "fs";
-import { runCommand } from "./utils.js"; // Import runCommand
+import { buildRecordCommand, runCommand } from "./utils.js"; // Import helpers
 /**
  * Records audio using the 'rec' command (from SoX) with VAD based on options.
  * @param {string} outputFile - Path to save the WAV file.
@@ -36,14 +36,9 @@ export function recordAudio(outputFile, options = {}) {
       `\n🎙  Threshold를 넘는 음성이 입력되면 자동으로 녹음 시작, 약 1초간 침묵이 유지되면 녹음이 중단됩니다.`
     );
     try {
-      // Use SoX 'rec' command:
-      // -q: quiet output
-      // -c 1 -r 16000 -b 16: 1 channel, 16kHz, 16-bit signed (standard for speech)
-      // ${soxSilenceEffect}: apply VAD
-      // trim 0 ${maxRecDuration}: ensures recording stops after maxRecDuration if VAD doesn't stop it first.
-      await runCommand(
-        `rec -q -c 1 -r 16000 -b 16 "${outputFile}" ${soxSilenceEffect} trim 0 ${maxRecDuration}`
-      );
+      const recordCmd = buildRecordCommand(outputFile, soxSilenceEffect, maxRecDuration);
+      // Platform-aware record command: SoX on Windows, rec elsewhere. Both share VAD options.
+      await runCommand(recordCmd);
       console.log("✅ 녹음 완료:", outputFile);
       resolve();
     } catch (err) {
