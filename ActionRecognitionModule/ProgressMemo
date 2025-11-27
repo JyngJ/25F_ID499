@@ -1,0 +1,16 @@
+핵심 변경
+
+- 기존 .ino 의존 파이프라인을 제거하고, StandardFirmata + Johnny-Five 조합으로 호스트에서 센서를 직접 제어하도록 전면 개편했습니다 (node/collect_data.js, node/run_inference.js).
+- collect_data.js는 라벨 안내/압력 베이스라인/CSV 저장을 모두 자동화해 `data/raw/*.csv`를 곧바로 학습에 쓸 수 있습니다.
+- train_model.py는 더 이상 Arduino 헤더를 생성하지 않고, run_inference.js가 읽을 JSON만 출력하도록 단순화했습니다 (requirements.txt에서 pyserial 제거).
+- README와 본 메모를 새로운 워크플로(펌웨어 준비 → Node 수집 → Python 학습 → Node 추론)에 맞춰 갱신했습니다.
+
+테스트
+
+- Johnny-Five 스크립트는 하드웨어 없이 논리 검토만 진행했습니다. 실제 보드 연결/StandardFirmata 환경에서 실행 검증이 필요합니다.
+
+다음 단계
+
+1. Arduino IDE에서 StandardFirmata를 보드에 올리고, `npm install` 로 의존성을 설치하세요.
+2. `node node/collect_data.js` 로 라벨별 데이터를 충분히 수집한 뒤 `python/train_model.py` 로 학습합니다.
+3. `node node/run_inference.js --model models/model_params.json` 으로 실시간 추론을 돌리고, 필요하면 `--window-size`, `--min-prob` 등을 조정해 안정화하세요.
