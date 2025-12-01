@@ -38,9 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a GRU-based sequence classifier.")
     parser.add_argument(
         "--data-dir",
+        dest="data_dirs",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "data" / "raw",
-        help="Directory containing sequence JSON files.",
+        nargs="+",
+        default=[Path(__file__).resolve().parents[1] / "data" / "raw"],
+        help="One or more directories containing sequence JSON files.",
     )
     parser.add_argument(
         "--model-out",
@@ -61,13 +63,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation split ratio.")
     parser.add_argument("--random-state", type=int, default=42, help="Deterministic split seed.")
     parser.add_argument("--device", type=str, default="auto", help="cpu, cuda, or auto.")
+    parser.add_argument(
+        "--stop-when-val-acc",
+        type=float,
+        default=None,
+        help="Early-stop when validation accuracy reaches or exceeds this value (0~1). Requires a validation set.",
+    )
+    parser.add_argument(
+        "--stop-patience",
+        type=int,
+        default=1,
+        help="Number of consecutive epochs meeting --stop-when-val-acc before stopping (default 1).",
+    )
     return parser.parse_args()
 
 
-def load_sequences(data_dir: Path) -> List[Dict]:
-    paths = sorted(data_dir.glob("*.json"))
+def load_sequences(data_dirs: Sequence[Path]) -> List[Dict]:
+    paths: List[Path] = []
+    for data_dir in data_dirs:
+        paths.extend(sorted(data_dir.glob("*.json")))
     if not paths:
-        raise FileNotFoundError(f"No JSON files found in {data_dir}. Run the sequence collector first.")
+        joined = ", ".join(str(d) for d in data_dirs)
+        raise FileNotFoundError(f"No JSON files found in {joined}. Run the sequence collector first.")
     records = []
     for path in paths:
         with path.open() as fp:
@@ -151,8 +168,11 @@ def train_loop(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     epochs: int,
+    stop_threshold: float | None,
+    stop_patience: int,
 ) -> Dict[str, List[float]]:
     history = {"train_loss": [], "val_loss": [], "val_acc": []}
+    patience_counter = 0
     for epoch in range(1, epochs + 1):
         model.train()
         running_loss = 0.0
@@ -177,6 +197,16 @@ def train_loop(
                 f"[Epoch {epoch:02d}] "
                 f"train_loss={epoch_loss:.4f} val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']*100:.2f}%"
             )
+            if stop_threshold is not None and val_metrics["accuracy"] >= stop_threshold:
+                patience_counter += 1
+                if patience_counter >= stop_patience:
+                    print(
+                        f"Validation accuracy {val_metrics['accuracy']*100:.2f}% "
+                        f"met threshold {stop_threshold*100:.1f}% for {patience_counter} epoch(s). Stopping early.",
+                    )
+                    break
+            else:
+                patience_counter = 0
         else:
             print(f"[Epoch {epoch:02d}] train_loss={epoch_loss:.4f} (validation skipped)")
     return history
@@ -224,7 +254,7 @@ def save_config(
 
 def main() -> None:
     args = parse_args()
-    records = load_sequences(args.data_dir)
+    records = load_sequences(args.data_dirs)
     labels = sorted({record["label"] for record in records})
     label_to_index = {label: idx for idx, label in enumerate(labels)}
     mean, std = compute_feature_stats(records)
@@ -284,6 +314,8 @@ def main() -> None:
         if val_dataset
         else None
     )
+    if args.stop_when_val_acc is not None and val_loader is None:
+        print("경고: 검증 세트가 없어 --stop-when-val-acc 옵션을 적용할 수 없습니다.")
 
     device = choose_device(args.device)
     print(f"Using device: {device}")
@@ -299,7 +331,17 @@ def main() -> None:
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    train_loop(model, train_loader, val_loader, criterion, optimizer, device, args.epochs)
+    train_loop(
+        model,
+        train_loader,
+        val_loader,
+        criterion,
+        optimizer,
+        device,
+        args.epochs,
+        args.stop_when_val_acc,
+        args.stop_patience,
+    )
 
     args.model_out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), args.model_out)

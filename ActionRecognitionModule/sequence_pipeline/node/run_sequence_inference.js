@@ -15,6 +15,7 @@ import fs from "fs";
 import path from "path";
 import readline from "readline";
 import { fileURLToPath } from "url";
+import { performance } from "perf_hooks";
 import dotenv from "dotenv";
 import five from "johnny-five";
 import { Command } from "commander";
@@ -240,6 +241,7 @@ board.on("ready", async () => {
 
       console.log("PyTorch 추론을 실행합니다...");
       try {
+        const inferenceStart = performance.now();
         const output = await runPythonInference({
           pythonCmd: options.python,
           scriptPath: options.inferScript,
@@ -247,13 +249,14 @@ board.on("ready", async () => {
           configPath: options.config,
           payload,
         });
+        const inferenceElapsed = performance.now() - inferenceStart;
         try {
           const parsed = JSON.parse(output);
           console.log(
-            `예측 결과: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%)`,
+            `예측 결과: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | 추론 ${inferenceElapsed.toFixed(1)}ms`,
           );
         } catch (parseErr) {
-          console.log("Python 출력:", output);
+          console.log(`Python 출력 (추론 ${inferenceElapsed.toFixed(1)}ms):`, output);
         }
       } catch (inferErr) {
         console.error("추론 중 오류:", inferErr);

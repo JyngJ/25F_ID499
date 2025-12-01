@@ -17,7 +17,7 @@ import json
 import math
 import random
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 import numpy as np
 
@@ -26,9 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Augment PillowMate sequence data.")
     parser.add_argument(
         "--data-dir",
+        dest="data_dirs",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "data" / "raw",
-        help="Directory containing original JSON sequences.",
+        nargs="+",
+        default=[Path(__file__).resolve().parents[1] / "data" / "raw"],
+        help="One or more directories containing original JSON sequences.",
     )
     parser.add_argument(
         "--output-dir",
@@ -51,13 +53,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--noise-std", type=float, default=0.02, help="Gaussian noise std dev.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--include-original", action="store_true", help="Copy original sequences into output.")
+    parser.add_argument(
+        "--split-by-session",
+        action="store_true",
+        help="Mirror the source directory structure under the output directory.",
+    )
     return parser.parse_args()
 
 
-def load_sequences(data_dir: Path) -> List[Path]:
-    paths = sorted(data_dir.glob("*.json"))
+def load_sequences(data_dirs: Sequence[Path]) -> List[Path]:
+    paths: List[Path] = []
+    for data_dir in data_dirs:
+        paths.extend(sorted(data_dir.glob("*.json")))
     if not paths:
-        raise FileNotFoundError(f"No JSON files found in {data_dir}.")
+        joined = ", ".join(str(d) for d in data_dirs)
+        raise FileNotFoundError(f"No JSON files found in {joined}.")
     return paths
 
 
@@ -104,15 +114,23 @@ def apply_ops(sequence: np.ndarray, ops: List[str], rng: random.Random, args: ar
     return augmented
 
 
-def save_sequence(base_payload: Dict, sequence: np.ndarray, output_dir: Path, suffix: str, index: int) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def save_sequence(
+    base_payload: Dict,
+    sequence: np.ndarray,
+    output_dir: Path,
+    suffix: str,
+    index: int,
+    session_name: str | None,
+) -> Path:
+    target_dir = output_dir / session_name if session_name else output_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{Path(base_payload['source']).stem}_{suffix}_{index:02d}.json"
     payload = {
         **base_payload,
         "frame_count": sequence.shape[0],
         "features": sequence.tolist(),
     }
-    path = output_dir / filename
+    path = target_dir / filename
     path.write_text(json.dumps(payload, indent=2), encoding="utf8")
     return path
 
@@ -122,7 +140,7 @@ def main() -> None:
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
 
-    input_paths = load_sequences(args.data_dir)
+    input_paths = load_sequences(args.data_dirs)
     written = 0
 
     for path in input_paths:
@@ -137,14 +155,15 @@ def main() -> None:
             "metadata": payload.get("metadata"),
             "source": str(path),
         }
+        session_name = Path(path).parent.name if args.split_by_session else None
         if args.include_original:
-            save_sequence(base_payload, features, args.output_dir, "orig", 0)
+            save_sequence(base_payload, features, args.output_dir, "orig", 0, session_name)
             written += 1
         if not args.ops:
             continue
         for copy_idx in range(1, args.copies + 1):
             augmented = apply_ops(features, args.ops, rng, args)
-            save_sequence(base_payload, augmented, args.output_dir, "aug", copy_idx)
+            save_sequence(base_payload, augmented, args.output_dir, "aug", copy_idx, session_name)
             written += 1
 
     print(f"Augmentation complete. Wrote {written} sequences to {args.output_dir}")

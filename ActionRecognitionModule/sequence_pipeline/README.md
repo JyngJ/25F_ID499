@@ -34,13 +34,15 @@ sequence_pipeline/
 ```bash
 cd ActionRecognitionModule/sequence_pipeline
 node node/collect_sequences.js \
-  --labels idle hug shake rest_head tap \
+  --labels idle shake tap \
   --trials 3 \
   --sample-ms 20 \
-  --record-seconds 30
+  --record-seconds 30 \
+  --output data/raw/shake_tap_2025_12_01
 ```
 
 - `Enter`로 녹화를 시작하면 지정된 시간(`--record-seconds`, 기본 30초) 동안 자동으로 기록하고 종료합니다. 0을 주면 이전처럼 수동 종료 모드가 됩니다.
+- `--output`을 바꿔 세션별 디렉터리(예: `data/raw/session_YYYYMMDD`)를 만들면, 나중에 학습 시 여러 세션을 동시에 지정할 수 있습니다.
 - 주요 옵션
   - `--labels <...>`: 녹화할 라벨 목록 (기본 `idle hug shake rest_head tap`)
   - `--trials <count>`: 라벨당 반복 횟수
@@ -68,14 +70,17 @@ node node/collect_sequences.js \
 ```bash
 cd ActionRecognitionModule/sequence_pipeline/python
 python augment_sequences.py \
-  --data-dir ../data/raw \
+  --data-dir ../data/raw/shake_tap_2025_12_01 ../data/raw/old \
   --output-dir ../data/augmented \
-  --ops random_crop noise time_scale \
+  --ops random_crop time_scale \
   --copies 3 \
-  --include-original
+  --include-original \
+  --split-by-session
 ```
 
 - `--ops`: 적용할 증강 목록. `random_crop`(랜덤 구간 잘라내기), `time_scale`(빠르게/느리게), `noise`(가우시안 노이즈).
+- `--data-dir`를 여러 개 전달해 새로 수집한 폴더들을 한 번에 증강할 수 있습니다.
+- `--split-by-session`을 켜면 `data/augmented/<세션명>/...` 형태로 저장되어 세션별 디렉터리가 유지됩니다.
 - `--copies`: 원본 1개당 몇 개의 증강본을 만들지.
 - `--min-crop-ratio`, `--max-crop-ratio`: 크롭 길이 비율.
 - `--min-scale`, `--max-scale`: 시간 스케일 팩터 범위.
@@ -89,19 +94,22 @@ python augment_sequences.py \
 ```bash
 cd ActionRecognitionModule/sequence_pipeline/python
 python train_sequence_model.py \
-  --data-dir ../data/augmented \
-  --model-out ../models/sequence_classifier.pt \
-  --config-out ../models/sequence_config.json \
-  --epochs 30 \
-  --batch-size 32 \
-  --hidden-dim 128
+  --data-dir ../data/augmented/old ../data/augmented/shake_tap_2025_12_01 \
+  --model-out ../models/sequence_classifier_20251201.pt \
+  --config-out ../models/sequence_config_20251201.json \
+  --epochs 60 \
+  --stop-when-val-acc 0.99 \
+  --stop-patience 3
 ```
 
-- 지정한 디렉터리(`--data-dir`)의 모든 시퀀스를 읽어 한 번에 학습합니다. 증강 후라면 `../data/augmented`를 지정하세요.
+- `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
+- 지정한 디렉터리들의 모든 시퀀스를 합쳐 한 번에 학습합니다. 증강 데이터를 쓰고 싶다면 증강 출력 디렉터리를 포함시키면 됩니다.
 - 주요 옵션
   - `--val-split`: 검증 비율 (기본 0.2)
   - `--random-state`: 시드
   - `--device`: `cpu`, `cuda`, `auto`
+  - `--stop-when-val-acc`: 검증 정확도가 특정 값(0~1)에 도달하면 조기 종료합니다. 검증 세트가 있어야 작동합니다.
+  - `--stop-patience`: 위 정확도 조건을 연속 몇 번 만족해야 멈출지(기본 1회). 예: `--stop-when-val-acc 0.98 --stop-patience 3`.
 - 출력물
   - `sequence_classifier.pt`: PyTorch state dict
   - `sequence_config.json`: 라벨 목록, 정규화(mean/std), 모델 하이퍼파라미터
@@ -114,14 +122,15 @@ python train_sequence_model.py \
 ```bash
 cd ActionRecognitionModule/sequence_pipeline
 node node/run_sequence_inference.js \
-  --model models/sequence_classifier.pt \
-  --config models/sequence_config.json
+  --model models/sequence_classifier_20251201.pt \
+  --config models/sequence_config_20251201.json
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
 - 여러 턴을 반복해서 실행하며, 매번 `sequence_infer.py`를 통해 라벨과 확률이 JSON으로 반환됩니다.
 
 주요 옵션
+
 - `--python`: 사용할 Python 명령 (기본 `python3`)
 - `--infer-script`: `sequence_infer.py` 위치
 - `--pressure-pin`, `--imu-controller`, `--sample-ms`, `--baseline-samples`: 수집과 동일
