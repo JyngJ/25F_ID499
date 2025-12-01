@@ -32,7 +32,13 @@ def parse_args() -> argparse.Namespace:
         help="Path to the JSON config with normalization + labels.",
     )
     parser.add_argument("--input", type=Path, help="Path to a JSON sequence. Reads stdin if omitted.")
-    parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda.")
+    parser.add_argument("--device", type=str, default="cpu", help="cpu, cuda, or mps.")
+    parser.add_argument(
+        "--low-pass-window",
+        type=int,
+        default=1,
+        help="Apply a moving-average low-pass filter before inference.",
+    )
     return parser.parse_args()
 
 
@@ -63,6 +69,7 @@ def main() -> None:
         raise ValueError(
             f"Expected {len(config['feature_names'])} features per frame, got {sequence_np.shape[1]}."
         )
+    sequence_np = low_pass_filter(sequence_np, args.low_pass_window)
     sequence = torch.from_numpy(sequence_np)
     sequence = (sequence - feature_mean) / feature_std
     sequence = sequence.unsqueeze(0)  # (1, seq_len, feat)
@@ -95,3 +102,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+def low_pass_filter(sequence: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1 or sequence.shape[0] < 2:
+        return sequence
+    kernel = np.ones(window, dtype=np.float32) / window
+    filtered = np.empty_like(sequence)
+    for col in range(sequence.shape[1]):
+        filtered[:, col] = np.convolve(sequence[:, col], kernel, mode="same")
+    return filtered

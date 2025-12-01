@@ -72,20 +72,31 @@ cd ActionRecognitionModule/sequence_pipeline/python
 python augment_sequences.py \
   --data-dir ../data/raw/shake_tap_2025_12_01 ../data/raw/old \
   --output-dir ../data/augmented \
-  --ops random_crop time_scale \
-  --copies 3 \
+  --ops random_crop time_scale time_shift amplitude_scale \
+  --copies 7 \
   --include-original \
-  --split-by-session
+  --split-by-session \
+  --time-shift-ratio 0.1 \
+  --amplitude-scale-min 0.9 \
+  --amplitude-scale-max 1.1 \
+  --time-mask-ratio 0.15 \
+  --time-mask-chunks 2
 ```
 
-- `--ops`: 적용할 증강 목록. `random_crop`(랜덤 구간 잘라내기), `time_scale`(빠르게/느리게), `noise`(가우시안 노이즈).
+- `--ops`: 적용할 증강 목록. 각 기법의 의미/세부 옵션:
+  - `random_crop`: 긴 시퀀스를 임의 구간으로 잘라 짧은 행동처럼 만듭니다 (`--min-crop-ratio`, `--max-crop-ratio`).
+  - `time_scale`: `--min-scale`~`--max-scale` 범위로 시간을 압축하거나 늘립니다.
+  - `time_shift`: 전체 시퀀스를 `--time-shift-ratio` 비율만큼 앞뒤로 이동하여 시작 위치를 바꿉니다.
+  - `amplitude_scale`: 각 특징을 `--amplitude-scale-min`~`--amplitude-scale-max` 비율로 스케일링해 강도를 변형합니다.
+  - `time_mask`: `--time-mask-ratio`만큼의 프레임을 0으로 만들고, `--time-mask-chunks`개 구간을 마스킹하여 누락/정지 구간을 흉내 냅니다. `--time-mask-targets`로 어떤 특징(pressure/accelerometer/gyroscope/all)에 적용할지 선택할 수 있으며, 기본은 pressure만 0으로 설정합니다.
+  - `noise`: `--noise-std` 표준편차의 가우시안 노이즈를 추가합니다(필요하면 `--ops` 목록에 `noise` 추가).
 - `--data-dir`를 여러 개 전달해 새로 수집한 폴더들을 한 번에 증강할 수 있습니다.
 - `--split-by-session`을 켜면 `data/augmented/<세션명>/...` 형태로 저장되어 세션별 디렉터리가 유지됩니다.
-- `--copies`: 원본 1개당 몇 개의 증강본을 만들지.
-- `--min-crop-ratio`, `--max-crop-ratio`: 크롭 길이 비율.
-- `--min-scale`, `--max-scale`: 시간 스케일 팩터 범위.
-- `--noise-std`: 노이즈 표준편차.
-- `--include-original`: 원본을 증강 폴더에 그대로 복사해 함께 학습하고 싶을 때 사용.
+- 추가 하이퍼파라미터
+  - `--copies`: 원본 1개당 몇 개의 증강본을 만들지.
+  - `--min/max-crop-ratio`, `--min/max-scale`: 크롭/시간 스케일 범위.
+  - `--time-shift-ratio`, `--amplitude-scale-min|max`, `--time-mask-ratio`, `--time-mask-chunks`, `--time-mask-targets`, `--noise-std` 등을 상황에 맞게 조절하세요.
+  - Idle 데이터에는 crop/shift를 제외하고, tap/hug에만 적용하고 싶다면 명령을 나눠 실행해도 됩니다.
 
 증강 결과는 `sequence_pipeline/data/augmented/*.json`으로 저장됩니다.
 
@@ -95,21 +106,29 @@ python augment_sequences.py \
 cd ActionRecognitionModule/sequence_pipeline/python
 python train_sequence_model.py \
   --data-dir ../data/augmented/old ../data/augmented/shake_tap_2025_12_01 \
-  --model-out ../models/sequence_classifier_20251201.pt \
-  --config-out ../models/sequence_config_20251201.json \
+  --model-out ../models/sequence_classifier_20251201_more.pt \
+  --config-out ../models/sequence_config_20251201_more.json \
   --epochs 60 \
+  --val-split 0.35 \
+  --batch-size 32 \
+  --hidden-dim 128 \
+   --low-pass-window 5 \
   --stop-when-val-acc 0.99 \
-  --stop-patience 3
+  --stop-patience 4 \
+  --log-misclassifications \
+  --device mps
 ```
 
 - `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
 - 지정한 디렉터리들의 모든 시퀀스를 합쳐 한 번에 학습합니다. 증강 데이터를 쓰고 싶다면 증강 출력 디렉터리를 포함시키면 됩니다.
 - 주요 옵션
-  - `--val-split`: 검증 비율 (기본 0.2)
+  - `--val-split`: 검증 비율 (기본 0.2). 검증 샘플을 늘리고 싶다면 0.3~0.4로 조정하세요.
   - `--random-state`: 시드
-  - `--device`: `cpu`, `cuda`, `auto`
+  - `--device`: `cpu`, `cuda`, `auto`. Apple Silicon(M1/M2)에서 Metal 가속을 쓰려면 PyTorch(MPS 지원)를 설치하고 `--device mps`를 명시하세요.
+  - `--low-pass-window`: 모든 시퀀스에 이동 평균 필터를 적용해 고주파 노이즈를 줄입니다(기본 1 = 미적용).
   - `--stop-when-val-acc`: 검증 정확도가 특정 값(0~1)에 도달하면 조기 종료합니다. 검증 세트가 있어야 작동합니다.
   - `--stop-patience`: 위 정확도 조건을 연속 몇 번 만족해야 멈출지(기본 1회). 예: `--stop-when-val-acc 0.98 --stop-patience 3`.
+  - `--log-misclassifications`: 각 epoch의 검증 단계에서 어떤 라벨이 어떤 라벨로 잘못 분류됐는지 요약을 출력합니다.
 - 출력물
   - `sequence_classifier.pt`: PyTorch state dict
   - `sequence_config.json`: 라벨 목록, 정규화(mean/std), 모델 하이퍼파라미터
@@ -123,7 +142,8 @@ python train_sequence_model.py \
 cd ActionRecognitionModule/sequence_pipeline
 node node/run_sequence_inference.js \
   --model models/sequence_classifier_20251201.pt \
-  --config models/sequence_config_20251201.json
+  --config models/sequence_config_20251201.json \
+  --low-pass-window 5
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
@@ -136,6 +156,7 @@ node node/run_sequence_inference.js \
 - `--pressure-pin`, `--imu-controller`, `--sample-ms`, `--baseline-samples`: 수집과 동일
 - `--quiet`: 중간 샘플 로그 숨김
 - `--port`/`SERIAL_PORT`: 시리얼 포트 강제
+- `--low-pass-window`: 추론 전 이동 평균 필터 길이. 학습 시 사용한 값과 맞추면 동일한 전처리가 됩니다.
 
 ### 3.2 오프라인 추론 (파일 입력)
 

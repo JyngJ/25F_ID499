@@ -62,7 +62,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-3, help="Adam learning rate.")
     parser.add_argument("--val-split", type=float, default=0.2, help="Validation split ratio.")
     parser.add_argument("--random-state", type=int, default=42, help="Deterministic split seed.")
-    parser.add_argument("--device", type=str, default="auto", help="cpu, cuda, or auto.")
+    parser.add_argument("--device", type=str, default="auto", help="cpu, cuda, mps, or auto.")
+    parser.add_argument(
+        "--low-pass-window",
+        type=int,
+        default=1,
+        help="Apply a moving-average low-pass filter of this window size to every sequence (>=1).",
+    )
     parser.add_argument(
         "--stop-when-val-acc",
         type=float,
@@ -75,10 +81,25 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Number of consecutive epochs meeting --stop-when-val-acc before stopping (default 1).",
     )
+    parser.add_argument(
+        "--log-misclassifications",
+        action="store_true",
+        help="Print misclassified label pairs on each validation pass.",
+    )
     return parser.parse_args()
 
 
-def load_sequences(data_dirs: Sequence[Path]) -> List[Dict]:
+def low_pass_filter(sequence: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1 or sequence.shape[0] < 2:
+        return sequence
+    kernel = np.ones(window, dtype=np.float32) / window
+    filtered = np.empty_like(sequence)
+    for col in range(sequence.shape[1]):
+        filtered[:, col] = np.convolve(sequence[:, col], kernel, mode="same")
+    return filtered
+
+
+def load_sequences(data_dirs: Sequence[Path], low_pass_window: int) -> List[Dict]:
     paths: List[Path] = []
     for data_dir in data_dirs:
         paths.extend(sorted(data_dir.glob("*.json")))
@@ -97,7 +118,7 @@ def load_sequences(data_dirs: Sequence[Path]) -> List[Dict]:
         records.append(
             {
                 "label": payload["label"],
-                "features": np.array(features, dtype=np.float32),
+                "features": low_pass_filter(np.array(features, dtype=np.float32), low_pass_window),
                 "sample_ms": payload.get("sample_ms", 20),
                 "path": str(path),
             }
@@ -170,6 +191,8 @@ def train_loop(
     epochs: int,
     stop_threshold: float | None,
     stop_patience: int,
+    label_names: List[str],
+    log_misclassified: bool,
 ) -> Dict[str, List[float]]:
     history = {"train_loss": [], "val_loss": [], "val_acc": []}
     patience_counter = 0
@@ -190,13 +213,25 @@ def train_loop(
         history["train_loss"].append(epoch_loss)
 
         if val_loader is not None:
-            val_metrics = evaluate(model, val_loader, criterion, device)
+            val_metrics = evaluate(
+                model,
+                val_loader,
+                criterion,
+                device,
+                label_names,
+                log_misclassified,
+            )
             history["val_loss"].append(val_metrics["loss"])
             history["val_acc"].append(val_metrics["accuracy"])
             print(
                 f"[Epoch {epoch:02d}] "
                 f"train_loss={epoch_loss:.4f} val_loss={val_metrics['loss']:.4f} val_acc={val_metrics['accuracy']*100:.2f}%"
             )
+            if log_misclassified and val_metrics.get("misclassified"):
+                print("  오분류 라벨:")
+                for true_label, preds in val_metrics["misclassified"].items():
+                    details = ", ".join(f"{pred}->{count}" for pred, count in preds.items())
+                    print(f"    {true_label}: {details}")
             if stop_threshold is not None and val_metrics["accuracy"] >= stop_threshold:
                 patience_counter += 1
                 if patience_counter >= stop_patience:
@@ -212,11 +247,19 @@ def train_loop(
     return history
 
 
-def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device: torch.device) -> Dict[str, float]:
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    label_names: Sequence[str],
+    log_misclassified: bool,
+) -> Dict[str, float]:
     model.eval()
     total_loss = 0.0
     correct = 0
     total = 0
+    misclassified: Dict[str, Dict[str, int]] = {label: {} for label in label_names} if log_misclassified else {}
     with torch.no_grad():
         for sequences, lengths, labels in loader:
             sequences = sequences.to(device)
@@ -228,9 +271,21 @@ def evaluate(model: nn.Module, loader: DataLoader, criterion: nn.Module, device:
             preds = logits.argmax(dim=1)
             correct += (preds == labels).sum().item()
             total += sequences.size(0)
+            if log_misclassified:
+                for true_idx, pred_idx in zip(labels.cpu().tolist(), preds.cpu().tolist()):
+                    if true_idx == pred_idx:
+                        continue
+                    true_label = label_names[true_idx]
+                    pred_label = label_names[pred_idx]
+                    misclassified.setdefault(true_label, {})
+                    misclassified[true_label][pred_label] = misclassified[true_label].get(pred_label, 0) + 1
     avg_loss = total_loss / max(total, 1)
     accuracy = correct / max(total, 1)
-    return {"loss": avg_loss, "accuracy": accuracy}
+    result: Dict[str, float | Dict[str, Dict[str, int]]] = {"loss": avg_loss, "accuracy": accuracy}
+    if log_misclassified:
+        filtered = {k: v for k, v in misclassified.items() if v}
+        result["misclassified"] = filtered
+    return result
 
 
 def save_config(
@@ -254,7 +309,7 @@ def save_config(
 
 def main() -> None:
     args = parse_args()
-    records = load_sequences(args.data_dirs)
+    records = load_sequences(args.data_dirs, args.low_pass_window)
     labels = sorted({record["label"] for record in records})
     label_to_index = {label: idx for idx, label in enumerate(labels)}
     mean, std = compute_feature_stats(records)
@@ -341,6 +396,8 @@ def main() -> None:
         args.epochs,
         args.stop_when_val_acc,
         args.stop_patience,
+        labels,
+        args.log_misclassifications,
     )
 
     args.model_out.parent.mkdir(parents=True, exist_ok=True)

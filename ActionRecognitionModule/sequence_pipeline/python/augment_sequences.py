@@ -41,8 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ops",
         nargs="+",
-        choices=["random_crop", "time_scale", "noise"],
-        default=["random_crop", "noise"],
+        choices=["random_crop", "time_scale", "noise", "time_shift", "amplitude_scale", "time_mask"],
+        default=["random_crop", "time_scale", "noise"],
         help="Augmentation operations to apply (in order).",
     )
     parser.add_argument("--copies", type=int, default=2, help="Augmented variants per original sequence.")
@@ -51,6 +51,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-scale", type=float, default=0.7, help="Minimum time scale factor.")
     parser.add_argument("--max-scale", type=float, default=1.3, help="Maximum time scale factor.")
     parser.add_argument("--noise-std", type=float, default=0.02, help="Gaussian noise std dev.")
+    parser.add_argument("--time-shift-ratio", type=float, default=0.1, help="Max fraction of sequence length to shift (time_shift).")
+    parser.add_argument(
+        "--amplitude-scale-min",
+        type=float,
+        default=0.9,
+        help="Minimum per-feature scale factor (amplitude_scale).",
+    )
+    parser.add_argument(
+        "--amplitude-scale-max",
+        type=float,
+        default=1.1,
+        help="Maximum per-feature scale factor (amplitude_scale).",
+    )
+    parser.add_argument(
+        "--time-mask-ratio",
+        type=float,
+        default=0.15,
+        help="Fraction of frames to zero out when applying time_mask.",
+    )
+    parser.add_argument(
+        "--time-mask-chunks",
+        type=int,
+        default=1,
+        help="Number of separate masked chunks when applying time_mask.",
+    )
+    parser.add_argument(
+        "--time-mask-targets",
+        nargs="+",
+        choices=["pressure", "accelerometer", "gyroscope", "all"],
+        default=["pressure"],
+        help="Which feature groups to zero during time_mask (default pressure only).",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--include-original", action="store_true", help="Copy original sequences into output.")
     parser.add_argument(
@@ -100,6 +132,51 @@ def add_noise(sequence: np.ndarray, rng: random.Random, noise_std: float) -> np.
     return sequence + noise
 
 
+def time_shift(sequence: np.ndarray, rng: random.Random, max_ratio: float) -> np.ndarray:
+    if sequence.shape[0] < 2 or max_ratio <= 0:
+        return sequence
+    max_shift = max(1, int(sequence.shape[0] * max_ratio))
+    shift = rng.randint(-max_shift, max_shift)
+    if shift == 0:
+        return sequence
+    return np.roll(sequence, shift, axis=0)
+
+
+def amplitude_scale(sequence: np.ndarray, rng: random.Random, min_scale: float, max_scale: float) -> np.ndarray:
+    if min_scale <= 0 or max_scale <= 0:
+        return sequence
+    scales = np.random.uniform(min_scale, max_scale, size=(sequence.shape[1],)).astype(np.float32)
+    return sequence * scales
+
+
+FEATURE_COLUMN_GROUPS = {
+    "pressure": [0],
+    "accelerometer": [1, 2, 3],
+    "gyroscope": [4, 5, 6],
+}
+
+
+def time_mask(sequence: np.ndarray, rng: random.Random, ratio: float, chunks: int, targets: List[str]) -> np.ndarray:
+    if ratio <= 0 or sequence.shape[0] < 2:
+        return sequence
+    total_frames = max(1, int(sequence.shape[0] * min(ratio, 1.0)))
+    chunk_len = max(1, total_frames // max(1, chunks))
+    masked = sequence.copy()
+    if "all" in targets:
+        columns = list(range(sequence.shape[1]))
+    else:
+        columns = []
+        for target in targets:
+            columns.extend(FEATURE_COLUMN_GROUPS.get(target, []))
+        columns = sorted(set(columns))
+    if not columns:
+        columns = FEATURE_COLUMN_GROUPS["pressure"]
+    for _ in range(max(1, chunks)):
+        start = rng.randint(0, max(0, sequence.shape[0] - chunk_len))
+        masked[start : start + chunk_len, columns] = 0.0
+    return masked
+
+
 def apply_ops(sequence: np.ndarray, ops: List[str], rng: random.Random, args: argparse.Namespace) -> np.ndarray:
     augmented = sequence.copy()
     for op in ops:
@@ -109,6 +186,12 @@ def apply_ops(sequence: np.ndarray, ops: List[str], rng: random.Random, args: ar
             augmented = time_scale(augmented, rng, args.min_scale, args.max_scale)
         elif op == "noise":
             augmented = add_noise(augmented, rng, args.noise_std)
+        elif op == "time_shift":
+            augmented = time_shift(augmented, rng, args.time_shift_ratio)
+        elif op == "amplitude_scale":
+            augmented = amplitude_scale(augmented, rng, args.amplitude_scale_min, args.amplitude_scale_max)
+        elif op == "time_mask":
+            augmented = time_mask(augmented, rng, args.time_mask_ratio, args.time_mask_chunks, args.time_mask_targets)
         else:
             raise ValueError(f"Unsupported op: {op}")
     return augmented

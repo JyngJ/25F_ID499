@@ -54,6 +54,12 @@ program
     "Path to sequence_config.json",
     path.resolve(PIPELINE_ROOT, "models", "sequence_config.json"),
   )
+  .option(
+    "--low-pass-window <samples>",
+    "Moving average window to apply before inference",
+    (value) => parseInt(value, 10),
+    1,
+  )
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
   .option("--quiet", "Suppress interim console logs", false);
 
@@ -100,9 +106,13 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
   return baseline;
 }
 
-function runPythonInference({ pythonCmd, scriptPath, modelPath, configPath, payload }) {
+function runPythonInference({ pythonCmd, scriptPath, modelPath, configPath, payload, lowPassWindow }) {
   return new Promise((resolve, reject) => {
-    const proc = spawn(pythonCmd, [scriptPath, "--model", modelPath, "--config", configPath], {
+    const args = [scriptPath, "--model", modelPath, "--config", configPath];
+    if (lowPassWindow && Number.isInteger(lowPassWindow) && lowPassWindow > 1) {
+      args.push("--low-pass-window", String(lowPassWindow));
+    }
+    const proc = spawn(pythonCmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -248,6 +258,7 @@ board.on("ready", async () => {
           modelPath: options.model,
           configPath: options.config,
           payload,
+          lowPassWindow: options.lowPassWindow,
         });
         const inferenceElapsed = performance.now() - inferenceStart;
         try {
