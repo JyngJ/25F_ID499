@@ -65,17 +65,22 @@ def low_pass_filter(sequence: np.ndarray, window: int) -> np.ndarray:
     return filtered
 
 
-def detect_idle(sequence: np.ndarray, args: argparse.Namespace) -> bool:
+def compute_idle_stats(sequence: np.ndarray) -> Dict[str, float]:
     pressure = sequence[:, 0]
-    pressure_std = float(np.std(pressure))
-    pressure_mean = float(np.mean(np.abs(pressure)))
-    accel_std = float(np.max(np.std(sequence[:, 1:4], axis=0)))
-    gyro_std = float(np.max(np.std(sequence[:, 4:7], axis=0)))
+    return {
+        "pressure_std": float(np.std(pressure)),
+        "pressure_mean_abs": float(np.mean(np.abs(pressure))),
+        "accel_std_max": float(np.max(np.std(sequence[:, 1:4], axis=0))),
+        "gyro_std_max": float(np.max(np.std(sequence[:, 4:7], axis=0))),
+    }
+
+
+def detect_idle(stats: Dict[str, float], args: argparse.Namespace) -> bool:
     return (
-        pressure_std <= args.idle_pressure_std
-        and pressure_mean <= args.idle_pressure_mean
-        and accel_std <= args.idle_accel_std
-        and gyro_std <= args.idle_gyro_std
+        stats["pressure_std"] <= args.idle_pressure_std
+        and stats["pressure_mean_abs"] <= args.idle_pressure_mean
+        and stats["accel_std_max"] <= args.idle_accel_std
+        and stats["gyro_std_max"] <= args.idle_gyro_std
     )
 
 
@@ -101,7 +106,18 @@ def main() -> None:
         )
     sequence_np = low_pass_filter(sequence_np, args.low_pass_window)
 
-    if args.auto_idle and detect_idle(sequence_np, args):
+    idle_stats = compute_idle_stats(sequence_np)
+    if args.auto_idle:
+        print(
+            "[auto-idle stats] "
+            f"pressure_std={idle_stats['pressure_std']:.4f}, "
+            f"|pressure_mean|={idle_stats['pressure_mean_abs']:.4f}, "
+            f"accel_std_max={idle_stats['accel_std_max']:.4f}, "
+            f"gyro_std_max={idle_stats['gyro_std_max']:.4f}",
+            file=sys.stderr,
+        )
+
+    if args.auto_idle and detect_idle(idle_stats, args):
         result = {
             "label": args.idle_label,
             "probability": 1.0,

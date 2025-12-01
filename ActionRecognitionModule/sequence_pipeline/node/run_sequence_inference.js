@@ -26,7 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PIPELINE_ROOT = path.resolve(__dirname, "..");
 const MODULE_ROOT = path.resolve(__dirname, "..", "..");
-const DEFAULT_PYTHON = "python3";
+const DEFAULT_PYTHON = "python";
 const FEATURE_NAMES = ["pressure_delta", "ax", "ay", "az", "gx", "gy", "gz"];
 
 dotenv.config({ path: path.join(MODULE_ROOT, ".env") });
@@ -126,24 +126,26 @@ function runPythonInference({
     if (lowPassWindow && Number.isInteger(lowPassWindow) && lowPassWindow > 1) {
       args.push("--low-pass-window", String(lowPassWindow));
     }
-    if (autoIdleOptions?.enabled) {
-      args.push("--auto-idle", "--idle-label", autoIdleOptions.label);
-      args.push("--idle-pressure-std", String(autoIdleOptions.pressureStd));
-      args.push("--idle-pressure-mean", String(autoIdleOptions.pressureMean));
-      args.push("--idle-accel-std", String(autoIdleOptions.accelStd));
+  if (autoIdleOptions?.enabled) {
+    args.push("--auto-idle", "--idle-label", autoIdleOptions.label);
+    args.push("--idle-pressure-std", String(autoIdleOptions.pressureStd));
+    args.push("--idle-pressure-mean", String(autoIdleOptions.pressureMean));
+    args.push("--idle-accel-std", String(autoIdleOptions.accelStd));
       args.push("--idle-gyro-std", String(autoIdleOptions.gyroStd));
     }
-    const proc = spawn(pythonCmd, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
+  const proc = spawn(pythonCmd, args, {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  proc.stdout.on("data", (chunk) => {
+    stdout += chunk.toString();
+  });
+  proc.stderr.on("data", (chunk) => {
+    // Echo Python stderr to help debug (e.g., auto-idle stats) while still capturing for errors.
+    process.stderr.write(chunk);
+    stderr += chunk.toString();
+  });
     proc.on("error", (err) => reject(err));
     proc.on("close", (code) => {
       if (code !== 0) {
@@ -251,7 +253,7 @@ board.on("ready", async () => {
           frames.push(frame);
           if (!options.quiet && frames.length % Math.max(1, Math.floor(1000 / options.sampleMs)) === 0) {
             console.log(
-              `샘플 ${frames.length}개 수집 중... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)}`,
+              `샘플 ${frames.length}개 수집 중... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
             );
           }
         }

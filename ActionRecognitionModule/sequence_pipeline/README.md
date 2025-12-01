@@ -149,10 +149,10 @@ node node/run_sequence_inference.js \
   --low-pass-window 5 \
   --auto-idle \
   --idle-label idle \
-  --idle-pressure-std 8 \
-  --idle-pressure-mean 15 \
-  --idle-accel-std 1 \
-  --idle-gyro-std 1
+  --idle-pressure-std 20 \
+  --idle-pressure-mean 40 \
+  --idle-accel-std 0.1 \
+  --idle-gyro-std 5
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
