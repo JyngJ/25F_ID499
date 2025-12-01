@@ -112,11 +112,12 @@ python train_sequence_model.py \
   --val-split 0.35 \
   --batch-size 32 \
   --hidden-dim 128 \
-   --low-pass-window 5 \
+  --low-pass-window 5 \
   --stop-when-val-acc 0.99 \
   --stop-patience 4 \
   --log-misclassifications \
-  --device mps
+  --device mps \
+  --exclude-labels idle
 ```
 
 - `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
@@ -126,9 +127,11 @@ python train_sequence_model.py \
   - `--random-state`: 시드
   - `--device`: `cpu`, `cuda`, `auto`. Apple Silicon(M1/M2)에서 Metal 가속을 쓰려면 PyTorch(MPS 지원)를 설치하고 `--device mps`를 명시하세요.
   - `--low-pass-window`: 모든 시퀀스에 이동 평균 필터를 적용해 고주파 노이즈를 줄입니다(기본 1 = 미적용).
+  - `--exclude-labels`: 특정 라벨을 완전히 제외하고 학습하고 싶을 때 사용합니다. 예: `--exclude-labels idle`.
   - `--stop-when-val-acc`: 검증 정확도가 특정 값(0~1)에 도달하면 조기 종료합니다. 검증 세트가 있어야 작동합니다.
   - `--stop-patience`: 위 정확도 조건을 연속 몇 번 만족해야 멈출지(기본 1회). 예: `--stop-when-val-acc 0.98 --stop-patience 3`.
   - `--log-misclassifications`: 각 epoch의 검증 단계에서 어떤 라벨이 어떤 라벨로 잘못 분류됐는지 요약을 출력합니다.
+  - 학습 중 검증 정확도가 갱신될 때마다 즉시 체크포인트를 저장하며, 동일 정확도일 경우 최신 상태로 덮어씁니다.
 - 출력물
   - `sequence_classifier.pt`: PyTorch state dict
   - `sequence_config.json`: 라벨 목록, 정규화(mean/std), 모델 하이퍼파라미터
@@ -141,9 +144,15 @@ python train_sequence_model.py \
 ```bash
 cd ActionRecognitionModule/sequence_pipeline
 node node/run_sequence_inference.js \
-  --model models/sequence_classifier_20251201.pt \
-  --config models/sequence_config_20251201.json \
-  --low-pass-window 5
+  --model models/sequence_classifier_20251201_more.pt \
+  --config models/sequence_config_20251201_more.json \
+  --low-pass-window 5 \
+  --auto-idle \
+  --idle-label idle \
+  --idle-pressure-std 8 \
+  --idle-pressure-mean 15 \
+  --idle-accel-std 1 \
+  --idle-gyro-std 1
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
@@ -157,6 +166,7 @@ node node/run_sequence_inference.js \
 - `--quiet`: 중간 샘플 로그 숨김
 - `--port`/`SERIAL_PORT`: 시리얼 포트 강제
 - `--low-pass-window`: 추론 전 이동 평균 필터 길이. 학습 시 사용한 값과 맞추면 동일한 전처리가 됩니다.
+- `--auto-idle`: 활성화하면 압력/IMU 변동이 매우 작거나 평균 압력 델타가 거의 0에 가까울 때 분류기에 돌리지 않고 지정한 라벨(`--idle-label`, 기본 idle)을 반환합니다. 기준치는 `--idle-pressure-std`, `--idle-pressure-mean`, `--idle-accel-std`, `--idle-gyro-std`로 조절할 수 있습니다.
 
 ### 3.2 오프라인 추론 (파일 입력)
 

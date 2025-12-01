@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Apply a moving-average low-pass filter before inference.",
     )
+    parser.add_argument("--auto-idle", action="store_true", help="Use heuristic idle detection before running the classifier.")
+    parser.add_argument("--idle-label", type=str, default="idle", help="Label to emit when auto idle detection triggers.")
+    parser.add_argument("--idle-pressure-std", type=float, default=5.0, help="Maximum pressure std to consider idle.")
+    parser.add_argument("--idle-pressure-mean", type=float, default=15.0, help="Maximum abs(mean pressure delta) to consider idle.")
+    parser.add_argument("--idle-accel-std", type=float, default=0.02, help="Maximum accelerometer std to consider idle.")
+    parser.add_argument("--idle-gyro-std", type=float, default=0.02, help="Maximum gyroscope std to consider idle.")
     return parser.parse_args()
 
 
@@ -47,6 +53,30 @@ def load_sequence(payload: Dict) -> np.ndarray:
     if not features:
         raise ValueError("Input sequence has no features.")
     return np.array(features, dtype=np.float32)
+
+
+def low_pass_filter(sequence: np.ndarray, window: int) -> np.ndarray:
+    if window <= 1 or sequence.shape[0] < 2:
+        return sequence
+    kernel = np.ones(window, dtype=np.float32) / window
+    filtered = np.empty_like(sequence)
+    for col in range(sequence.shape[1]):
+        filtered[:, col] = np.convolve(sequence[:, col], kernel, mode="same")
+    return filtered
+
+
+def detect_idle(sequence: np.ndarray, args: argparse.Namespace) -> bool:
+    pressure = sequence[:, 0]
+    pressure_std = float(np.std(pressure))
+    pressure_mean = float(np.mean(np.abs(pressure)))
+    accel_std = float(np.max(np.std(sequence[:, 1:4], axis=0)))
+    gyro_std = float(np.max(np.std(sequence[:, 4:7], axis=0)))
+    return (
+        pressure_std <= args.idle_pressure_std
+        and pressure_mean <= args.idle_pressure_mean
+        and accel_std <= args.idle_accel_std
+        and gyro_std <= args.idle_gyro_std
+    )
 
 
 def main() -> None:
@@ -70,6 +100,17 @@ def main() -> None:
             f"Expected {len(config['feature_names'])} features per frame, got {sequence_np.shape[1]}."
         )
     sequence_np = low_pass_filter(sequence_np, args.low_pass_window)
+
+    if args.auto_idle and detect_idle(sequence_np, args):
+        result = {
+            "label": args.idle_label,
+            "probability": 1.0,
+            "probabilities": {label: (1.0 if label == args.idle_label else 0.0) for label in labels},
+            "detected_idle": True,
+        }
+        print(json.dumps(result, ensure_ascii=False))
+        return
+
     sequence = torch.from_numpy(sequence_np)
     sequence = (sequence - feature_mean) / feature_std
     sequence = sequence.unsqueeze(0)  # (1, seq_len, feat)
@@ -102,11 +143,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-def low_pass_filter(sequence: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1 or sequence.shape[0] < 2:
-        return sequence
-    kernel = np.ones(window, dtype=np.float32) / window
-    filtered = np.empty_like(sequence)
-    for col in range(sequence.shape[1]):
-        filtered[:, col] = np.convolve(sequence[:, col], kernel, mode="same")
-    return filtered

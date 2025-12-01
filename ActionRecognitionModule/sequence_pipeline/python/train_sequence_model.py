@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
         help="Apply a moving-average low-pass filter of this window size to every sequence (>=1).",
     )
     parser.add_argument(
+        "--exclude-labels",
+        nargs="+",
+        default=[],
+        help="Labels to drop entirely from training (e.g., idle).",
+    )
+    parser.add_argument(
         "--stop-when-val-acc",
         type=float,
         default=None,
@@ -193,8 +199,10 @@ def train_loop(
     stop_patience: int,
     label_names: List[str],
     log_misclassified: bool,
+    checkpoint_callback=None,
 ) -> Dict[str, List[float]]:
     history = {"train_loss": [], "val_loss": [], "val_acc": []}
+    best_acc = None
     patience_counter = 0
     for epoch in range(1, epochs + 1):
         model.train()
@@ -232,6 +240,11 @@ def train_loop(
                 for true_label, preds in val_metrics["misclassified"].items():
                     details = ", ".join(f"{pred}->{count}" for pred, count in preds.items())
                     print(f"    {true_label}: {details}")
+            if checkpoint_callback is not None and (
+                best_acc is None or val_metrics["accuracy"] >= best_acc
+            ):
+                best_acc = val_metrics["accuracy"]
+                checkpoint_callback({"loss": val_metrics["loss"], "accuracy": best_acc}, model.state_dict())
             if stop_threshold is not None and val_metrics["accuracy"] >= stop_threshold:
                 patience_counter += 1
                 if patience_counter >= stop_patience:
@@ -310,6 +323,13 @@ def save_config(
 def main() -> None:
     args = parse_args()
     records = load_sequences(args.data_dirs, args.low_pass_window)
+    if args.exclude_labels:
+        before = len(records)
+        records = [record for record in records if record["label"] not in args.exclude_labels]
+        removed = before - len(records)
+        print(f"Excluded {removed} sequences with labels {args.exclude_labels}.")
+        if not records:
+            raise ValueError("No sequences remain after excluding labels. Adjust --exclude-labels.")
     labels = sorted({record["label"] for record in records})
     label_to_index = {label: idx for idx, label in enumerate(labels)}
     mean, std = compute_feature_stats(records)
@@ -386,7 +406,21 @@ def main() -> None:
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    train_loop(
+    best_state: Dict[str, torch.Tensor] | None = None
+    best_metrics: Dict[str, float] | None = None
+
+    def checkpoint_callback(metrics: Dict[str, float], state_dict: Dict[str, torch.Tensor]) -> None:
+        nonlocal best_state, best_metrics
+        best_state = {k: v.detach().cpu().clone() for k, v in state_dict.items()}
+        best_metrics = metrics
+        args.model_out.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(best_state, args.model_out)
+        save_config(args.config_out, labels, mean, std, model_params=model_kwargs)
+        print(
+            f"Saved checkpoint (val_acc {metrics['accuracy']*100:.2f}%) to {args.model_out}",
+        )
+
+    history = train_loop(
         model,
         train_loader,
         val_loader,
@@ -398,7 +432,14 @@ def main() -> None:
         args.stop_patience,
         labels,
         args.log_misclassifications,
+        checkpoint_callback,
     )
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        print("Loaded best validation checkpoint before saving.")
+    else:
+        print("No validation metrics recorded; saving final model state.")
 
     args.model_out.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), args.model_out)

@@ -60,6 +60,12 @@ program
     (value) => parseInt(value, 10),
     1,
   )
+  .option("--auto-idle", "Enable heuristic idle detection", false)
+  .option("--idle-label <name>", "Label name to emit when auto idle triggers", "idle")
+  .option("--idle-pressure-std <value>", "Pressure std threshold for auto idle", (value) => parseFloat(value), 5.0)
+  .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 15.0)
+  .option("--idle-accel-std <value>", "Accel std threshold for auto idle", (value) => parseFloat(value), 0.02)
+  .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 0.02)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
   .option("--quiet", "Suppress interim console logs", false);
 
@@ -106,11 +112,26 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
   return baseline;
 }
 
-function runPythonInference({ pythonCmd, scriptPath, modelPath, configPath, payload, lowPassWindow }) {
+function runPythonInference({
+  pythonCmd,
+  scriptPath,
+  modelPath,
+  configPath,
+  payload,
+  lowPassWindow,
+  autoIdleOptions,
+}) {
   return new Promise((resolve, reject) => {
     const args = [scriptPath, "--model", modelPath, "--config", configPath];
     if (lowPassWindow && Number.isInteger(lowPassWindow) && lowPassWindow > 1) {
       args.push("--low-pass-window", String(lowPassWindow));
+    }
+    if (autoIdleOptions?.enabled) {
+      args.push("--auto-idle", "--idle-label", autoIdleOptions.label);
+      args.push("--idle-pressure-std", String(autoIdleOptions.pressureStd));
+      args.push("--idle-pressure-mean", String(autoIdleOptions.pressureMean));
+      args.push("--idle-accel-std", String(autoIdleOptions.accelStd));
+      args.push("--idle-gyro-std", String(autoIdleOptions.gyroStd));
     }
     const proc = spawn(pythonCmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
@@ -259,6 +280,16 @@ board.on("ready", async () => {
           configPath: options.config,
           payload,
           lowPassWindow: options.lowPassWindow,
+          autoIdleOptions: options.autoIdle
+            ? {
+                enabled: true,
+                label: options.idleLabel,
+                pressureStd: options.idlePressureStd,
+                pressureMean: options.idlePressureMean,
+                accelStd: options.idleAccelStd,
+                gyroStd: options.idleGyroStd,
+              }
+            : { enabled: false },
         });
         const inferenceElapsed = performance.now() - inferenceStart;
         try {
