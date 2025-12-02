@@ -2,3 +2,20 @@ node_modules/
 .env
 /assets/*.wav
 /assets/*.mp3
+/ActionRecognitionModule/data
+/ActionRecognitionModule/sequence_pipeline/data
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+
+# macOS
+.DS_Store
+
+# Trained models/configs
+# /ActionRecognitionModule/sequence_pipeline/models/sequence_classifier*.pt
+# /ActionRecognitionModule/sequence_pipeline/models/sequence_config*.json
