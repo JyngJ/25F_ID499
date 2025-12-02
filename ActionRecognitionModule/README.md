@@ -200,3 +200,29 @@ cat my_sequence.json | python sequence_infer.py --model ... --config ...
 - **시리얼 타임아웃**: 본래 모듈과 동일하게 StandardFirmata가 올라가 있는지, `SERIAL_PORT` 설정이 맞는지 확인하세요.
 
 이제 음성 턴 길이와 무관하게 전체 시퀀스를 학습/추론할 수 있으므로, PillowMate의 실사용 UX와 더 자연스럽게 맞출 수 있습니다.
+
+## 6. 음성 대화 + 행동 인식 통합 루프
+
+루트의 `voice_chat_loop_with_action.js`는 음성 대화 루프(`voice_chat_loop.js`)에 센서 기반 행동 인식을 통합한 스크립트입니다. 마이크 입력을 받는 동안 햅틱/압력 센서를 동시에 읽어 행동 라벨을 LLM 입력과 함께 전달합니다.
+
+```bash
+# 행동 인식 로그까지 모두 보고 싶다면 ACTION_VERBOSE_LOGS=1을 앞에 붙입니다.
+ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
+```
+
+- 실행 전 `ActionRecognitionModule/models/sequence_classifier_*.pt`와 config, 센서 하드웨어가 준비되어야 합니다.
+- `audio.js`, `gpt_chat.js`, `config.js` 등 기존 음성 대화 의존성은 루트 README의 안내를 따릅니다.
+- 내부적으로 `ActionRecognitionModule/node/run_sequence_inference.js`를 자식 프로세스로 띄워 센서 시퀀스를 수집하고, STT 결과에는 `[Detected action: ...]` 메타 정보를 덧붙여 GPT에게 전달합니다.
+
+### 주요 옵션/동작
+- `recorder.js`는 `mic` 모듈을 이용해 실시간 입력 레벨(rms)을 ASCII 바 형태로 출력합니다. 추후 `registerLedAdapter()`로 LED 표시 장치를 연결할 수 있도록 스켈레톤을 제공하고 있습니다.
+- `voice_chat_loop_with_action.js` 상단의 `ACTION_OPTIONS`에서 행동 인식 모델 경로/옵션(로우패스, idle 휴리스틱, `--python-device` 등)을 조정할 수 있습니다.
+- `voice_chat_loop_with_action.js` 내부 루프 구조:
+  1. GPT 초기 프롬프트를 TTS로 재생.
+  2. 매 턴마다 `recordAudio()`로 사용자의 발화를 녹음하면서 동시에 행동 인식 프로세스를 시작.
+  3. STT 텍스트와 행동 라벨을 합쳐 GPT에 전달.
+  4. GPT 응답을 TTS로 재생하고 로그에 행동/LED 패턴을 출력.
+
+### 에러 처리/중단
+- 행동 인식 프로세스는 `ActionRecognizer` 클래스로 관리되며, 각 턴마다 Enter 신호를 대신 보내고 결과 라인을 파싱합니다. 타임아웃(15초)이 발생하면 `idle` 라벨을 반환하도록 기본 처리.
+- `Ctrl+C` 등으로 종료 시, 백그라운드 프로세스들을 정리한 후 종료되도록 되어 있습니다.
