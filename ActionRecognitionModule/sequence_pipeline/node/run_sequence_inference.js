@@ -54,6 +54,7 @@ program
     "Path to sequence_config.json",
     path.resolve(PIPELINE_ROOT, "models", "sequence_config.json"),
   )
+  .option("--python-device <device>", "Device passed to sequence_infer.py (cpu/cuda/mps)", "cpu")
   .option(
     "--low-pass-window <samples>",
     "Moving average window to apply before inference",
@@ -62,10 +63,10 @@ program
   )
   .option("--auto-idle", "Enable heuristic idle detection", false)
   .option("--idle-label <name>", "Label name to emit when auto idle triggers", "idle")
-  .option("--idle-pressure-std <value>", "Pressure std threshold for auto idle", (value) => parseFloat(value), 5.0)
-  .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 15.0)
-  .option("--idle-accel-std <value>", "Accel std threshold for auto idle", (value) => parseFloat(value), 0.02)
-  .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 0.02)
+  .option("--idle-pressure-std <value>", "Pressure std threshold for auto idle", (value) => parseFloat(value), 1.0)
+  .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 1.0)
+  .option("--idle-accel-std <value>", "Accel std threshold for auto idle", (value) => parseFloat(value), 0.1)
+  .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 10.0)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
   .option("--quiet", "Suppress interim console logs", false);
 
@@ -120,9 +121,10 @@ function runPythonInference({
   payload,
   lowPassWindow,
   autoIdleOptions,
+  pythonDevice,
 }) {
   return new Promise((resolve, reject) => {
-    const args = [scriptPath, "--model", modelPath, "--config", configPath];
+    const args = [scriptPath, "--model", modelPath, "--config", configPath, "--device", pythonDevice];
     if (lowPassWindow && Number.isInteger(lowPassWindow) && lowPassWindow > 1) {
       args.push("--low-pass-window", String(lowPassWindow));
     }
@@ -292,6 +294,7 @@ board.on("ready", async () => {
                 gyroStd: options.idleGyroStd,
               }
             : { enabled: false },
+          pythonDevice: options.pythonDevice,
         });
         const inferenceElapsed = performance.now() - inferenceStart;
         try {

@@ -152,7 +152,8 @@ node node/run_sequence_inference.js \
   --idle-pressure-std 20 \
   --idle-pressure-mean 40 \
   --idle-accel-std 0.1 \
-  --idle-gyro-std 5
+  --idle-gyro-std 5 \
+  --python-device mps
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
@@ -166,6 +167,7 @@ node node/run_sequence_inference.js \
 - `--quiet`: 중간 샘플 로그 숨김
 - `--port`/`SERIAL_PORT`: 시리얼 포트 강제
 - `--low-pass-window`: 추론 전 이동 평균 필터 길이. 학습 시 사용한 값과 맞추면 동일한 전처리가 됩니다.
+- `--python-device`: `sequence_infer.py`에 전달할 PyTorch 디바이스(`mps`, `cpu`, `cuda`). M1/M2에서는 기본 `mps`로 빠르게 추론할 수 있습니다.
 - `--auto-idle`: 활성화하면 압력/IMU 변동이 매우 작거나 평균 압력 델타가 거의 0에 가까울 때 분류기에 돌리지 않고 지정한 라벨(`--idle-label`, 기본 idle)을 반환합니다. 기준치는 `--idle-pressure-std`, `--idle-pressure-mean`, `--idle-accel-std`, `--idle-gyro-std`로 조절할 수 있습니다.
 
 ### 3.2 오프라인 추론 (파일 입력)
