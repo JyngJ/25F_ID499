@@ -1,149 +1,202 @@
-# PillowMate 행동 인식 모듈 (Johnny-Five 기반)
+# PillowMate 시퀀스 기반 행동 인식 파이프라인
 
-Velostat 압력센서와 MPU6050 IMU를 이용해 PillowMate가 사용자의 물리적 상호작용(토닥, 눕기, 껴안기, 흔들기)을 분류합니다. 기존의 `*.ino` 스케치 대신, 아두이노에 **StandardFirmata**를 올려 두고 호스트 PC에서 Johnny-Five(Node.js)로 센서를 직접 제어‧수집‧추론하는 구조로 전환했습니다.
+이 프로젝트는 음성 턴 길이에 맞춰 **가변 길이** 센서 시퀀스를 그대로 학습‧추론할 수 있도록 만든 파이프라인입니다. 기존 고정 윈도우 로지스틱 회귀 코드를 수정하지 않고, 새로운 데이터 흐름과 모델(양방향 GRU)을 제공합니다.
 
-## 구성 개요
+## 구성
 
 ```
 node/
-  collect_data.js        # Johnny-Five 기반 상호작용형 데이터 수집기
-  run_inference.js       # 실시간 추론 루프 (Johnny-Five + 학습된 모델)
+  collect_sequences.js      # 라벨별 가변 길이 시퀀스 수집
+  run_sequence_inference.js # 사용자 턴 단위 실시간 추론
 python/
-  train_model.py         # scikit-learn 로지스틱 회귀 학습 + JSON 내보내기
-  requirements.txt       # Python 의존성
+  train_sequence_model.py   # PyTorch GRU 학습
+  sequence_model.py         # 모델 정의
+  sequence_infer.py         # 단일 시퀀스 추론 CLI
 data/
-  raw/                   # 수집된 CSV (collect_data.js 결과)
+  raw/                      # JSON 시퀀스 저장 위치
 models/
-  model_params.json      # train_model.py가 생성한 모델 파라미터
+  sequence_classifier.pt    # GRU 가중치
+  sequence_config.json      # 라벨/정규화/모델 메타데이터
 ```
 
-## 파이프라인 한눈에 보기
+## 0. 의존성
 
-1. **데이터 수집**  
-   `node/collect_data.js` → Johnny-Five가 Velostat/IMU 값을 읽고, 각 라벨(`idle`, `tap`, ...)별로 CSV를 생성합니다.
-2. **모델 학습**  
-   `python/train_model.py` → 모든 CSV를 병합, 표준화 및 다중 클래스 로지스틱 회귀로 학습, `models/model_params.json`으로 내보냅니다.
-3. **실시간 추론**  
-   `node/run_inference.js` → 동일한 센서를 읽어 최근 샘플을 평균낸 뒤 JSON 파라미터로 softmax 확률을 계산, 콘솔에 현재 동작을 표시합니다.
+- Node.js 18+ (`johnny-five`, `commander`, etc.) – 루트에서 `npm install` 한 번이면 됩니다.
+- Python 3.10+ + PyTorch 2.x (CPU로 충분). 예:
+  ```bash
+  pip install torch==2.3.1 --extra-index-url https://download.pytorch.org/whl/cpu
+  pip install numpy scikit-learn
+  ```
 
-각 단계는 독립적으로 실행할 수 있지만, 항상 “수집 → 학습 → 추론” 순서로 진행하면 가장 최신 데이터가 반영된 모델을 얻을 수 있습니다.
-
-## 사전 준비
-
-1. **보드 펌웨어**  
-   _Arduino IDE → File → Examples → Firmata → StandardFirmata_ 를 보드에 업로드합니다. 이 한 번의 작업 이후에는 별도 .ino 없이 PC에서 모든 처리를 수행합니다.
-
-2. **하드웨어 연결**
-
-   - Velostat + 저항 분압을 `A0`로 입력
-   - MPU6050 IMU를 I2C(`SDA`, `SCL`)에 연결
-   - USB 케이블로 PC와 연결
-
-3. **소프트웨어**
-   - Node.js 18+ (Johnny-Five 호환)
-   - Python 3.9+
-   - 루트에서 `npm install` 을 실행하여 `johnny-five`, `commander` 등 의존성을 설치합니다.
-   - `cd ActionRecognitionModule/python && conda create -n pillowmate-action python=3.10 -y && conda activate pillowmate-action && pip install -r requirements.txt`
-
-## 1. 데이터 수집 (`node/collect_data.js`)
-
-**Serial 포트 지정 (선택)**
-
-1. 보드를 USB에 연결한 뒤 리눅스에서 포트를 확인합니다.
-   ```bash
-   ls /dev/ttyACM*
-   # 또는
-   ls /dev/ttyUSB*
-   # 상세 확인: dmesg | grep tty
-   ```
-2. 확인한 경로를 `ActionRecognitionModule/.env` 파일에 작성합니다.
-   ```
-   SERIAL_PORT=/dev/ttyACM0
-   ```
-   Node 기반 도구(`node/collect_data.js`, `node/run_inference.js`)가 자동으로 이 값을 사용해 특정 포트로 연결을 시도합니다.
+## 1. 가변 길이 시퀀스 수집
 
 ```bash
 cd ActionRecognitionModule
-node node/collect_data.js \
-  --labels idle tap rest_head hug \
-  --duration 6 \
-  --trials 3
+node node/collect_sequences.js \
+  --labels idle shake tap \
+  --trials 3 \
+  --sample-ms 20 \
+  --record-seconds 30 \
+  --output data/raw/shake_tap_2025_12_01
 ```
 
-- 실행하면 각 라벨마다 `Enter` 키를 눌러 녹음을 시작하도록 안내합니다.
-- 스크립트가 먼저 압력센서 기준치를 자동으로 측정한 뒤, `data/raw/action_module_YYYYMMDD_HHMMSS.csv`에 `pressure`(baseline 제거값) + IMU + 라벨을 기록합니다.
+- `Enter`로 녹화를 시작하면 지정된 시간(`--record-seconds`, 기본 30초) 동안 자동으로 기록하고 종료합니다. 0을 주면 이전처럼 수동 종료 모드가 됩니다.
+- `--output`을 바꿔 세션별 디렉터리(예: `data/raw/session_YYYYMMDD`)를 만들면, 나중에 학습 시 여러 세션을 동시에 지정할 수 있습니다.
 - 주요 옵션
-  - `--labels <labels...>`: 기록 대상 라벨 목록. 기본값은 `idle tap rest_head hug shake`.
-  - `--duration <seconds>`: 한 trial 동안 저장할 시간(초). 기본 5초.
-  - `--trials <count>`: 라벨당 반복 횟수. 기본 3회.
-  - `--sample-ms <ms>`: 센서를 몇 ms마다 샘플링할지(기본 20ms). 값이 작을수록 샘플이 많아집니다.
-  - `--pressure-pin <pin>`: Velostat를 연결한 아날로그 핀(`A0` 등).
-  - `--imu-controller <name>`: Johnny-Five IMU 컨트롤러 이름(기본 `MPU6050`). 다른 센서를 쓰면 변경하세요.
-  - `--baseline-samples <count>`: baseline 측정에 사용할 샘플 수. 기본 200.
-  - `--output <dir>`: CSV를 저장할 디렉터리. 기본 `ActionRecognitionModule/data/raw`.
-  - `--quiet`: 실행 중 콘솔에 센서 값을 출력하지 않도록 함.
-- 환경 변수
-  - `SERIAL_PORT` (또는 `.env`에 동일한 키 작성): 보드가 연결된 시리얼 포트를 강제로 지정하고 싶을 때 사용합니다. 예: `SERIAL_PORT=/dev/tty.usbmodem1101`.
-- `idle` 라벨은 베개를 건드리지 않고 자연스럽게 놓여 있는 상태를 의미합니다. 데이터 수집 시 가장 먼저 녹화하면 모델이 기본 자세를 안정적으로 분리할 수 있습니다.
+  - `--labels <...>`: 녹화할 라벨 목록 (기본 `idle hug shake rest_head tap`)
+  - `--trials <count>`: 라벨당 반복 횟수
+  - `--sample-ms <ms>`: Johnny-Five 샘플링 주기
+  - `--pressure-pin`, `--imu-controller`: 센서 핀과 IMU 종류
+  - `--baseline-samples`: ΔP 계산을 위한 기준 샘플 수
+  - `--record-seconds <sec>`: 라벨별 자동 녹화 길이. 0이면 수동 종료 모드.
+  - `--output <dir>`: JSON 시퀀스를 저장할 경로 (기본 `data/raw`)
+  - `--quiet`: 중간 샘플 로그를 숨김
+  - `--port <path>` 또는 `.env`의 `SERIAL_PORT`: 특정 시리얼 포스 강제
+- 출력 JSON 예시
+  ```json
+  {
+    "label": "hug",
+    "sample_ms": 20,
+    "feature_names": ["pressure_delta","ax","ay","az","gx","gy","gz"],
+    "features": [[-12.3, 0.01, ...], ...]
+  }
+  ```
 
-## 2. 모델 학습 (`python/train_model.py`)
+## 2. 데이터 증강 (선택)
+
+고정 길이로 수집된 시퀀스를 다양한 길이/강도로 변형해 모델 일반화를 높입니다.
 
 ```bash
 cd ActionRecognitionModule/python
-python train_model.py
+python augment_sequences.py \
+  --data-dir ../data/raw/shake_tap_2025_12_01 ../data/raw/old \
+  --output-dir ../data/augmented \
+  --ops random_crop time_scale time_shift amplitude_scale \
+  --copies 7 \
+  --include-original \
+  --split-by-session \
+  --time-shift-ratio 0.1 \
+  --amplitude-scale-min 0.9 \
+  --amplitude-scale-max 1.1 \
+  --time-mask-ratio 0.15 \
+  --time-mask-chunks 2
 ```
 
-- `data/raw/*.csv` 를 모두 읽어 표준화 + 다중 클래스 로지스틱 회귀를 학습합니다.
-- 출력
-  - `models/model_params.json`: Johnny-Five 추론 루프가 직접 읽을 수 있는 가중치/편향/스케일 정보
-  - 콘솔 분류 리포트 + 혼동 행렬
-- 주요 옵션
-  - `--data-dir <path>`: CSV를 모아 둔 경로. 기본 `../data/raw`.
-  - `--json-out <path>`: 학습 결과를 기록할 JSON 경로. 기본 `../models/model_params.json`.
-  - `--test-size <ratio>`: 검증 세트 비율(0~1). 기본 0.2.
-  - `--random-state <seed>`: train/test 분할과 모델 초기화 시드. 기본 42.
+- `--ops`: 적용할 증강 목록. 각 기법의 의미/세부 옵션:
+  - `random_crop`: 긴 시퀀스를 임의 구간으로 잘라 짧은 행동처럼 만듭니다 (`--min-crop-ratio`, `--max-crop-ratio`).
+  - `time_scale`: `--min-scale`~`--max-scale` 범위로 시간을 압축하거나 늘립니다.
+  - `time_shift`: 전체 시퀀스를 `--time-shift-ratio` 비율만큼 앞뒤로 이동하여 시작 위치를 바꿉니다.
+  - `amplitude_scale`: 각 특징을 `--amplitude-scale-min`~`--amplitude-scale-max` 비율로 스케일링해 강도를 변형합니다.
+  - `time_mask`: `--time-mask-ratio`만큼의 프레임을 0으로 만들고, `--time-mask-chunks`개 구간을 마스킹하여 누락/정지 구간을 흉내 냅니다. `--time-mask-targets`로 어떤 특징(pressure/accelerometer/gyroscope/all)에 적용할지 선택할 수 있으며, 기본은 pressure만 0으로 설정합니다.
+  - `noise`: `--noise-std` 표준편차의 가우시안 노이즈를 추가합니다(필요하면 `--ops` 목록에 `noise` 추가).
+- `--data-dir`를 여러 개 전달해 새로 수집한 폴더들을 한 번에 증강할 수 있습니다.
+- `--split-by-session`을 켜면 `data/augmented/<세션명>/...` 형태로 저장되어 세션별 디렉터리가 유지됩니다.
+- 추가 하이퍼파라미터
+  - `--copies`: 원본 1개당 몇 개의 증강본을 만들지.
+  - `--min/max-crop-ratio`, `--min/max-scale`: 크롭/시간 스케일 범위.
+  - `--time-shift-ratio`, `--amplitude-scale-min|max`, `--time-mask-ratio`, `--time-mask-chunks`, `--time-mask-targets`, `--noise-std` 등을 상황에 맞게 조절하세요.
+  - Idle 데이터에는 crop/shift를 제외하고, tap/hug에만 적용하고 싶다면 명령을 나눠 실행해도 됩니다.
 
-## 3. 실시간 추론 (`node/run_inference.js`)
+증강 결과는 `data/augmented/*.json`으로 저장됩니다.
+
+## 3. GRU 모델 학습
+
+```bash
+cd ActionRecognitionModule/python
+python train_sequence_model.py \
+  --data-dir ../data/augmented/old ../data/augmented/shake_tap_2025_12_01 \
+  --model-out ../models/sequence_classifier_20251201_more.pt \
+  --config-out ../models/sequence_config_20251201_more.json \
+  --epochs 60 \
+  --val-split 0.35 \
+  --batch-size 32 \
+  --hidden-dim 128 \
+  --low-pass-window 5 \
+  --stop-when-val-acc 0.99 \
+  --stop-patience 4 \
+  --log-misclassifications \
+  --device mps \
+  --exclude-labels idle
+```
+
+- `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
+- 지정한 디렉터리들의 모든 시퀀스를 합쳐 한 번에 학습합니다. 증강 데이터를 쓰고 싶다면 증강 출력 디렉터리를 포함시키면 됩니다.
+- 주요 옵션
+  - `--val-split`: 검증 비율 (기본 0.2). 검증 샘플을 늘리고 싶다면 0.3~0.4로 조정하세요.
+  - `--random-state`: 시드
+  - `--device`: `cpu`, `cuda`, `auto`. Apple Silicon(M1/M2)에서 Metal 가속을 쓰려면 PyTorch(MPS 지원)를 설치하고 `--device mps`를 명시하세요.
+  - `--low-pass-window`: 모든 시퀀스에 이동 평균 필터를 적용해 고주파 노이즈를 줄입니다(기본 1 = 미적용).
+  - `--exclude-labels`: 특정 라벨을 완전히 제외하고 학습하고 싶을 때 사용합니다. 예: `--exclude-labels idle`.
+  - `--stop-when-val-acc`: 검증 정확도가 특정 값(0~1)에 도달하면 조기 종료합니다. 검증 세트가 있어야 작동합니다.
+  - `--stop-patience`: 위 정확도 조건을 연속 몇 번 만족해야 멈출지(기본 1회). 예: `--stop-when-val-acc 0.98 --stop-patience 3`.
+  - `--log-misclassifications`: 각 epoch의 검증 단계에서 어떤 라벨이 어떤 라벨로 잘못 분류됐는지 요약을 출력합니다.
+  - 학습 중 검증 정확도가 갱신될 때마다 즉시 체크포인트를 저장하며, 동일 정확도일 경우 최신 상태로 덮어씁니다.
+- 출력물
+  - `sequence_classifier.pt`: PyTorch state dict
+  - `sequence_config.json`: 라벨 목록, 정규화(mean/std), 모델 하이퍼파라미터
+- 학습 로그에는 Epoch별 train/val loss 및 정확도가 표시됩니다.
+
+## 4. 사용자 턴 추론
+
+### 3.1 Node + Python 연동 (실제 센서)
 
 ```bash
 cd ActionRecognitionModule
-node node/run_inference.js \
-  --model models/model_params.json \
-  --window-size 8 \
-  --prediction-interval 250 \
-  --idle-label idle
+node node/run_sequence_inference.js \
+  --model models/sequence_classifier_20251201_more.pt \
+  --config models/sequence_config_20251201_more.json \
+  --low-pass-window 5 \
+  --auto-idle \
+  --idle-label idle \
+  --idle-pressure-std 20 \
+  --idle-pressure-mean 40 \
+  --idle-accel-std 0.1 \
+  --idle-gyro-std 5 \
+  --python-device mps
 ```
 
-- 실행 시 압력 기준을 다시 측정하고, 지정된 윈도우 길이만큼 센서를 평균낸 뒤 확률이 가장 높은 라벨과 신뢰도를 콘솔에 출력합니다. 화면 하단에는 `현재 동작` 상태가 실시간으로 업데이트되며, 라벨이 바뀔 때마다 타임스탬프 로그가 추가됩니다.
-- 주요 옵션
-  - `--model <path>`: 사용할 `model_params.json` 위치.
-  - `--pressure-pin <pin>` / `--imu-controller <name>` / `--sample-ms <ms>`: 수집 스크립트와 동일한 의미.
-  - `--window-size <samples>`: 평균에 사용할 샘플 개수. 8이면 약 160ms 분량.
-  - `--prediction-interval <ms>`: 예측/상태 갱신 주기. 기본 250ms.
-  - `--baseline-samples <count>`: 실행 시 재측정할 baseline 샘플 수. 기본 200.
-  - `--min-prob <value>`: 이 확률 이상일 때만 동작 라벨로 인정. 낮출수록 민감해짐.
-  - `--idle-label <name>`: 모델에서 “가만히 있는 상태”로 간주할 라벨. 기본 `idle`.
-  - `--verbose`: 각 예측마다 평균 피처 벡터를 추가 출력.
-  - 환경 변수 `SERIAL_PORT`: 특정 포트로 강제 연결할 때 사용 (collect_data와 동일).
+- Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
+- 여러 턴을 반복해서 실행하며, 매번 `sequence_infer.py`를 통해 라벨과 확률이 JSON으로 반환됩니다.
 
-## 작동 방식
+주요 옵션
 
-- **피처**: `[pressure_delta, ax, ay, az, gx, gy, gz]` (pressure_delta는 수집/추론 시 동일하게 baseline을 뺀 값)
-- **모델**: z-score 표준화 후 다중 클래스 로지스틱 회귀 (`scikit-learn`).
-- **추론 루프**: Johnny-Five로 센서를 50Hz 전후로 샘플링 → 최근 `N`개의 샘플을 평균 → JSON 파라미터로 logits 계산 → softmax 확률.
+- `--python`: 사용할 Python 명령 (기본 `python3`)
+- `--infer-script`: `sequence_infer.py` 위치
+- `--pressure-pin`, `--imu-controller`, `--sample-ms`, `--baseline-samples`: 수집과 동일
+- `--quiet`: 중간 샘플 로그 숨김
+- `--port`/`SERIAL_PORT`: 시리얼 포트 강제
+- `--low-pass-window`: 추론 전 이동 평균 필터 길이. 학습 시 사용한 값과 맞추면 동일한 전처리가 됩니다.
+- `--python-device`: `sequence_infer.py`에 전달할 PyTorch 디바이스(`mps`, `cpu`, `cuda`). M1/M2에서는 기본 `mps`로 빠르게 추론할 수 있습니다.
+- `--auto-idle`: 활성화하면 압력/IMU 변동이 매우 작거나 평균 압력 델타가 거의 0에 가까울 때 분류기에 돌리지 않고 지정한 라벨(`--idle-label`, 기본 idle)을 반환합니다. 기준치는 `--idle-pressure-std`, `--idle-pressure-mean`, `--idle-accel-std`, `--idle-gyro-std`로 조절할 수 있습니다.
 
-## 유용한 옵션/확장
+### 3.2 오프라인 추론 (파일 입력)
 
-- 라벨 수를 늘리거나 줄이고 싶다면 `collect_data.js --labels ...` 에서 원하는 목록을 전달하고 동일한 목록으로 데이터를 수집한 뒤 재학습합니다.
-- 기본 상태를 더 잘 모델링하려면 `idle`(또는 원하는 이름) 라벨을 충분히 녹화하고, 추론 시 `--idle-label` 옵션으로 동일한 이름을 지정합니다.
-- 다른 IMU를 쓴다면 `run_inference.js --imu-controller` 와 `collect_data.js --imu-controller` 를 해당 Johnny-Five 컨트롤러 이름으로 바꾸면 됩니다.
-- 데이터 품질을 높이고 싶다면 `data/raw`의 여러 CSV를 수동으로 정제해도 괜찮습니다. `train_model.py`는 지정된 디렉터리의 모든 CSV를 자동으로 병합합니다.
+```bash
+cd ActionRecognitionModule/python
+python sequence_infer.py \
+  --model ../models/sequence_classifier.pt \
+  --config ../models/sequence_config.json \
+  --input ../data/raw/sequence_hug_20240616T010203.json
+```
 
-## 문제 해결
+또는 JSON을 stdin으로 파이프할 수도 있습니다:
 
-- **보드 연결 오류**: StandardFirmata가 올라가 있는지, 다른 프로세스가 시리얼 포트를 잡고 있지 않은지 확인합니다.
-- **센서 값이 0만 나오는 경우**: 전원/그라운드/아날로그 핀 결선을 재확인하고 `collect_data.js --pressure-pin` 값이 맞는지 검증하세요.
-- **예측이 한 라벨에만 치우칠 때**: 라벨별 데이터 균형을 맞추고, `models/model_params.json`을 최신 데이터로 재생성합니다.
-- **npm 의존성**: `node`/`npm`이 설치되어 있지 않은 환경이라면 설치 후 `npm install`을 다시 실행해야 합니다.
+```bash
+cat my_sequence.json | python sequence_infer.py --model ... --config ...
+```
 
-이제 별도의 .ino 수정 없이도 USB로 연결된 보드에서 바로 데이터를 모으고, 학습하고, 실시간으로 예측까지 수행할 수 있습니다. 즐거운 실험 되세요!
+출력은 `{"label": "...", "probability": 0.93, ...}` 형태의 JSON입니다.
+
+## 4. 파이프라인 통합 아이디어
+
+- 음성 턴 시작 이벤트에서 `run_sequence_inference.js` 또는 동일한 로직을 호출해 센서 시퀀스를 버퍼링합니다.
+- 턴이 끝날 때 PyTorch 추론 결과(`label`, `probability`, 전체 분포)를 LLM 입력 구조에 포함시킵니다.
+- 실시간 피드백이 필요하다면 녹화 중에도 `frames`를 슬라이딩 윈도우에 넣어 즉시 행동을 추정하고, 턴 종료 시 대표 라벨을 요약할 수 있습니다.
+
+## 5. 문제 해결
+
+- **JSON이 비어 있음**: 녹화 중 Enter를 바로 눌렀는지 확인하세요. 최소한 몇 백 ms가 지나야 프레임이 쌓입니다.
+- **PyTorch Device Error**: `--device cpu` 플래그로 강제로 CPU를 사용하세요.
+- **시리얼 타임아웃**: 본래 모듈과 동일하게 StandardFirmata가 올라가 있는지, `SERIAL_PORT` 설정이 맞는지 확인하세요.
+
+이제 음성 턴 길이와 무관하게 전체 시퀀스를 학습/추론할 수 있으므로, PillowMate의 실사용 UX와 더 자연스럽게 맞출 수 있습니다.
