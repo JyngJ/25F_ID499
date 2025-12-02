@@ -31,6 +31,36 @@ function renderLevel(level) {
       0,
     )}%`,
   );
+  updateLedForLevel(clamped);
+}
+
+let ledAdapter = null;
+let lastLedLevel = 0;
+
+export function registerLedAdapter(adapter) {
+  ledAdapter = adapter;
+}
+
+function updateLedForLevel(level) {
+  // 최근 입력값과 결합해 LED 밝기 변화가 부드럽게 이어지도록 한다.
+  const eased = lastLedLevel * 0.7 + level * 0.3;
+  lastLedLevel = eased;
+  const brightness = Math.round(Math.min(1, Math.max(0, eased)) * 255);
+  // 간단한 컬러 맵: 낮은 입력은 파란빛, 중간 입력은 녹색/청록, 높은 입력은 주황빛으로 표현
+  const color =
+    brightness < 85
+      ? [0, 0, brightness]
+      : brightness < 170
+        ? [0, brightness, brightness / 2]
+        : [brightness, 50, 0];
+  const payload = { brightness, color };
+  if (ledAdapter && typeof ledAdapter.setState === "function") {
+    // 실제 LED 어댑터가 주입된 경우, 해당 장치에 상태 전달
+    ledAdapter.setState(payload);
+  } else {
+    // 아직 하드웨어가 연결되지 않았다면 콘솔에 예시 상태만 출력
+    process.stdout.write(`  | LED preview -> brightness:${brightness} color:[${color.join(",")}]`);
+  }
 }
 
 export function recordAudio(outputFile, options = {}) {
