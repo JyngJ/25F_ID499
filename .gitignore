@@ -3,7 +3,7 @@ node_modules/
 /assets/*.wav
 /assets/*.mp3
 /ActionRecognitionModule/data
-/ActionRecognitionModule/sequence_pipeline/data
+/ActionRecognitionModule/data
 
 # Python artifacts
 __pycache__/
@@ -17,5 +17,5 @@ __pycache__/
 .DS_Store
 
 # Trained models/configs
-# /ActionRecognitionModule/sequence_pipeline/models/sequence_classifier*.pt
-# /ActionRecognitionModule/sequence_pipeline/models/sequence_config*.json
+/ActionRecognitionModule/models/sequence_classifier*.pt
+/ActionRecognitionModule/models/sequence_config*.json
