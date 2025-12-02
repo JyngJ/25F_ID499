@@ -6,7 +6,6 @@
  *
  * Adds activity segmentation:
  * - Frame-wise activity score (pressure + accel + gyro)
- * - Simple recent-weighted running average (EMA 느낌) for smoothing
  * - Hysteresis high/low thresholds to turn activity on/off
  * - Padding, short-burst drop, gap merge
  * - Each detected block is sent separately to the Python model; idle-only input is skipped.
@@ -43,17 +42,17 @@ program
   .option(
     "--infer-script <path>",
     "Path to python/sequence_infer.py",
-    path.resolve(MODULE_ROOT, "sequence_pipeline", "python", "sequence_infer.py"),
+    path.resolve(MODULE_ROOT, "python", "sequence_infer.py"),
   )
   .option(
     "--model <path>",
     "Path to sequence_classifier.pt",
-    path.resolve(MODULE_ROOT, "sequence_pipeline", "models", "sequence_classifier.pt"),
+    path.resolve(MODULE_ROOT, "models", "sequence_classifier_20251201_more.pt"),
   )
   .option(
     "--config <path>",
     "Path to sequence_config.json",
-    path.resolve(MODULE_ROOT, "sequence_pipeline", "models", "sequence_config.json"),
+    path.resolve(MODULE_ROOT, "models", "sequence_config_20251201_more.json"),
   )
   .option("--python-device <device>", "Device passed to sequence_infer.py (cpu/cuda/mps)", "cpu")
   .option(
@@ -64,24 +63,18 @@ program
   )
   .option("--auto-idle", "Enable heuristic idle detection", false)
   .option("--idle-label <name>", "Label name to emit when auto idle triggers", "idle")
-  .option("--idle-pressure-std <value>", "Pressure std threshold for auto idle", (value) => parseFloat(value), 1.0)
-  .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 1.0)
+  .option("--idle-pressure-std <value>", "Pressure std threshold for auto idle", (value) => parseFloat(value), 20)
+  .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 40)
   .option("--idle-accel-std <value>", "Accel std threshold for auto idle", (value) => parseFloat(value), 0.1)
-  .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 10.0)
-  .option("--activity-high <value>", "High threshold for activity on/off", (value) => parseFloat(value), 0.8)
-  .option("--activity-low <value>", "Low threshold for activity on/off", (value) => parseFloat(value), 0.4)
-  .option(
-    "--activity-smooth <value>",
-    "Smoothing factor (0~1, recent values get more weight)",
-    (value) => parseFloat(value),
-    0.3,
-  )
+  .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 5.0)
+  .option("--activity-high <value>", "High threshold for activity on/off", (value) => parseFloat(value), 100)
+  .option("--activity-low <value>", "Low threshold for activity on/off", (value) => parseFloat(value), 10)
   .option("--activity-min-frames <count>", "Minimum frames to keep an activity block", (value) => parseInt(value, 10), 5)
-  .option("--activity-pad-frames <count>", "Frames of context to pad around each block", (value) => parseInt(value, 10), 3)
-  .option("--activity-gap-merge <count>", "Merge blocks if idle gap <= this", (value) => parseInt(value, 10), 2)
-  .option("--activity-weight-pressure <value>", "Weight for pressure in activity score", (value) => parseFloat(value), 1.0)
-  .option("--activity-weight-accel <value>", "Weight for accel magnitude in activity score", (value) => parseFloat(value), 0.8)
-  .option("--activity-weight-gyro <value>", "Weight for gyro magnitude in activity score", (value) => parseFloat(value), 0.5)
+  .option("--activity-pad-frames <count>", "Frames of context to pad around each block", (value) => parseInt(value, 10), 0)
+  .option("--activity-gap-merge <count>", "Merge blocks if idle gap <= this", (value) => parseInt(value, 10), 100)
+  .option("--activity-weight-pressure <value>", "Weight for pressure in activity score", (value) => parseFloat(value), 0.000001)
+  .option("--activity-weight-accel <value>", "Weight for accel magnitude in activity score", (value) => parseFloat(value), 150.0)
+  .option("--activity-weight-gyro <value>", "Weight for gyro magnitude in activity score", (value) => parseFloat(value), 500.0)
   .option("--disable-activity-segmentation", "Send whole sequence without idle trimming", false)
   .option("--activity-plot", "Plot activity score + thresholds + blocks with nodeplotlib", false)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
@@ -114,45 +107,47 @@ async function waitForSensors(conditionFn, timeoutMs = 8000) {
   }
 }
 
-async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
-  console.log(`\nCalibrating pressure baseline with ${samples} samples...`);
-  let collected = 0;
-  let sum = 0;
-  while (collected < samples) {
-    const value = readPressure();
-    if (value != null) {
-      sum += value;
-      collected += 1;
+async function calibrateBaselines(readPressure, readAccel, readGyro, samples, sampleDelayMs) {
+  console.log(`\nCalibrating pressure + IMU baselines with ${samples} samples...`);
+  let pressureSum = 0;
+  let pressureCount = 0;
+  let accelSum = 0;
+  let accelCount = 0;
+  let gyroSum = 0;
+  let gyroCount = 0;
+
+  for (let i = 0; i < samples; i += 1) {
+    const p = readPressure();
+    if (p != null) {
+      pressureSum += p;
+      pressureCount += 1;
+    }
+    const a = readAccel();
+    if (a) {
+      const accelMag = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z);
+      accelSum += accelMag;
+      accelCount += 1;
+    }
+    const g = readGyro();
+    if (g) {
+      const gyroMag = Math.sqrt(g.x * g.x + g.y * g.y + g.z * g.z);
+      gyroSum += gyroMag;
+      gyroCount += 1;
     }
     await delay(sampleDelayMs);
   }
-  const baseline = sum / samples;
-  console.log(`Pressure baseline: ${baseline.toFixed(2)}`);
-  return baseline;
+
+  const pressureBaseline = pressureCount ? pressureSum / pressureCount : 0;
+  const accelBaseline = accelCount ? accelSum / accelCount : 0;
+  const gyroBaseline = gyroCount ? gyroSum / gyroCount : 0;
+  console.log(
+    `Baselines -> pressure=${pressureBaseline.toFixed(2)}, |accel|=${accelBaseline.toFixed(
+      3,
+    )}, |gyro|=${gyroBaseline.toFixed(3)}`,
+  );
+  return { pressureBaseline, accelBaseline, gyroBaseline };
 }
 
-async function calibrateMotionBaseline(readAccel, readGyro, samples, sampleDelayMs) {
-  console.log(`\nCalibrating IMU baseline with ${samples} samples...`);
-  let collected = 0;
-  let accelSum = 0;
-  let gyroSum = 0;
-  while (collected < samples) {
-    const accel = readAccel();
-    const gyro = readGyro();
-    if (accel && gyro) {
-      const accelMag = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
-      const gyroMag = Math.sqrt(gyro.x * gyro.x + gyro.y * gyro.y + gyro.z * gyro.z);
-      accelSum += accelMag;
-      gyroSum += gyroMag;
-      collected += 1;
-    }
-    await delay(sampleDelayMs);
-  }
-  const accelBaseline = accelSum / Math.max(collected, 1);
-  const gyroBaseline = gyroSum / Math.max(collected, 1);
-  console.log(`IMU baseline: |accel|=${accelBaseline.toFixed(3)}, |gyro|=${gyroBaseline.toFixed(3)}`);
-  return { accelBaseline, gyroBaseline };
-}
 
 function runPythonInference({
   pythonCmd,
@@ -202,13 +197,12 @@ function runPythonInference({
 }
 
 function computeActivityScores(frames, opts) {
-  const { weightPressure, weightAccel, weightGyro, smoothFactor, baselines, collectTerms } = opts;
+  const { weightPressure, weightAccel, weightGyro, baselines, collectTerms } = opts;
   // Use calibrated baselines (pressure already baseline-subtracted).
   const basePressure = Math.max(1e-6, Math.abs(baselines.pressure));
   const baseAccel = Math.max(1e-6, baselines.accel);
   const baseGyro = Math.max(1e-6, baselines.gyro);
 
-  let smooth = 0;
   const scores = [];
   const terms = collectTerms ? [] : null;
   for (const frame of frames) {
@@ -219,9 +213,7 @@ function computeActivityScores(frames, opts) {
     const accelTerm = Math.abs(accelMag - baseAccel) / baseAccel;
     const gyroTerm = Math.abs(gyroMag - baseGyro) / baseGyro;
     const raw = weightPressure * pressureTerm + weightAccel * accelTerm + weightGyro * gyroTerm;
-    // Simple recent-weighted running average (EMA 느낌): smooth <- smoothFactor * old + (1 - smoothFactor) * raw
-    smooth = smoothFactor * smooth + (1 - smoothFactor) * raw;
-    scores.push(smooth);
+    scores.push(raw);
     if (terms) {
       terms.push({ pressureTerm, accelTerm, gyroTerm });
     }
@@ -278,13 +270,13 @@ async function plotActivity(scores, blocks, { high, low, terms }) {
   }
   const x = scores.map((_, idx) => idx);
   const traces = [
-    { x, y: scores, type: "scatter", mode: "lines", name: "activity score" },
+    { x, y: scores, type: "scatter", mode: "lines", name: "activity score"},
     {
       x: [0, scores.length - 1],
       y: [high, high],
       type: "scatter",
       mode: "lines",
-      line: { dash: "dash", color: "red" },
+      line: { dash: "dash", color: "green" },
       name: "high",
     },
     {
@@ -292,14 +284,14 @@ async function plotActivity(scores, blocks, { high, low, terms }) {
       y: [low, low],
       type: "scatter",
       mode: "lines",
-      line: { dash: "dot", color: "orange" },
+      line: { dash: "dash", color: "orange" },
       name: "low",
     },
   ];
   if (terms && terms.length === scores.length) {
     traces.push({
       x,
-      y: terms.map((t) => t.pressureTerm),
+      y: terms.map((t) => t.pressureTerm * options.activityWeightPressure),
       type: "scatter",
       mode: "lines",
       line: { color: "blue", dash: "dot" },
@@ -307,15 +299,15 @@ async function plotActivity(scores, blocks, { high, low, terms }) {
     });
     traces.push({
       x,
-      y: terms.map((t) => t.accelTerm),
+      y: terms.map((t) => t.accelTerm * options.activityWeightAccel),
       type: "scatter",
       mode: "lines",
-      line: { color: "purple", dash: "dot" },
+      line: { color: "red", dash: "dot" },
       name: "accel term",
     });
     traces.push({
       x,
-      y: terms.map((t) => t.gyroTerm),
+      y: terms.map((t) => t.gyroTerm * options.activityWeightGyro),
       type: "scatter",
       mode: "lines",
       line: { color: "brown", dash: "dot" },
@@ -332,7 +324,7 @@ async function plotActivity(scores, blocks, { high, low, terms }) {
     x1: e,
     y0: yMin,
     y1: yMax,
-    fillcolor: "rgba(0,200,0,0.1)",
+    fillcolor: "rgba(0,200,0,0.2)",
     line: { width: 0 },
   }));
   const layout = {
@@ -409,16 +401,14 @@ board.on("ready", async () => {
 
   try {
     await waitForSensors(() => latestPressure !== null && latestAccel !== null && latestGyro !== null);
-    const baseline = await calibrateBaseline(() => latestPressure, options.baselineSamples, options.sampleMs);
-    console.log("\n사용자 턴을 녹화하려면 Enter를 누르세요. (종료: Ctrl+C)");
-
-    let sensorLogTick = 0;
-    const motionBaselines = await calibrateMotionBaseline(
+    const baselines = await calibrateBaselines(
+      () => latestPressure,
       () => latestAccel,
       () => latestGyro,
       options.baselineSamples,
       options.sampleMs,
     );
+    let sensorLogTick = 0;
     console.log("\nReady. Press Enter to start recording. (Ctrl+C to exit)");
 
     while (true) {
@@ -434,7 +424,7 @@ board.on("ready", async () => {
       while (!stopRequested) {
         if (latestPressure != null && latestAccel && latestGyro) {
           const frame = [
-            latestPressure - baseline,
+            latestPressure - baselines.pressureBaseline,
             latestAccel.x,
             latestAccel.y,
             latestAccel.z,
@@ -445,7 +435,7 @@ board.on("ready", async () => {
           frames.push(frame);
           if (!options.quiet && frames.length % Math.max(1, Math.floor(1000 / options.sampleMs)) === 0) {
             console.log(
-              `샘플 ${frames.length}개 수집 중... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
+              `${frames.length} samples collected... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
             );
           }
           if (options.streamSensors) {
@@ -483,11 +473,10 @@ board.on("ready", async () => {
           weightPressure: options.activityWeightPressure,
           weightAccel: options.activityWeightAccel,
           weightGyro: options.activityWeightGyro,
-          smoothFactor: options.activitySmooth,
           baselines: {
             pressure: 0, // already baseline-subtracted
-            accel: motionBaselines.accelBaseline,
-            gyro: motionBaselines.gyroBaseline,
+            accel: baselines.accelBaseline,
+            gyro: baselines.gyroBaseline,
           },
           collectTerms: options.activityPlot || Boolean(options.activityDebugLog),
         });
@@ -555,7 +544,7 @@ board.on("ready", async () => {
           try {
             const parsed = JSON.parse(output);
             console.log(
-              `Block ${longestIdx + 1}: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | ${inferenceElapsed.toFixed(1)}ms`,
+              `${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | ${inferenceElapsed.toFixed(1)}ms`,
             );
           } catch (parseErr) {
             console.log(`Python output (block ${longestIdx + 1}, ${inferenceElapsed.toFixed(1)}ms):`, output);
