@@ -510,14 +510,26 @@ board.on("ready", async () => {
         }
       }
 
-      for (let i = 0; i < blocks.length; i += 1) {
-        const [start, end] = blocks[i];
+      if (blocks.length) {
+        // 규칙: idle 제외 활동 블록 중 가장 긴 한 개만 추론
+        let longestIdx = 0;
+        let longestLen = 0;
+        blocks.forEach(([s, e], idx) => {
+          const len = e - s + 1;
+          if (len > longestLen) {
+            longestLen = len;
+            longestIdx = idx;
+          }
+        });
+        const [start, end] = blocks[longestIdx];
         const segment = frames.slice(start, end + 1);
         const payload = { ...basePayload, features: segment };
         const durationSec = ((end - start + 1) * options.sampleMs) / 1000;
-        console.log(
-          `PyTorch inference on block ${i + 1}/${blocks.length} (frames=${segment.length}, ${durationSec.toFixed(2)}s)...`,
-        );
+        if (!options.quiet) {
+          console.log(
+            `Selected longest block ${longestIdx + 1}/${blocks.length} (frames=${segment.length}, ${durationSec.toFixed(2)}s) for inference.`,
+          );
+        }
         try {
           const inferenceStart = performance.now();
           const output = await runPythonInference({
@@ -543,13 +555,13 @@ board.on("ready", async () => {
           try {
             const parsed = JSON.parse(output);
             console.log(
-              `Block ${i + 1}: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | ${inferenceElapsed.toFixed(1)}ms`,
+              `Block ${longestIdx + 1}: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | ${inferenceElapsed.toFixed(1)}ms`,
             );
           } catch (parseErr) {
-            console.log(`Python output (block ${i + 1}, ${inferenceElapsed.toFixed(1)}ms):`, output);
+            console.log(`Python output (block ${longestIdx + 1}, ${inferenceElapsed.toFixed(1)}ms):`, output);
           }
         } catch (inferErr) {
-          console.error(`Block ${i + 1} inference error:`, inferErr);
+          console.error(`Block ${longestIdx + 1} inference error:`, inferErr);
         }
       }
     }
