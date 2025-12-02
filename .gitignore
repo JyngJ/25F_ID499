@@ -17,5 +17,5 @@ __pycache__/
 .DS_Store
 
 # Trained models/configs
-/ActionRecognitionModule/models/sequence_classifier*.pt
-/ActionRecognitionModule/models/sequence_config*.json
+# /ActionRecognitionModule/models/sequence_classifier*.pt
+# /ActionRecognitionModule/models/sequence_config*.json
