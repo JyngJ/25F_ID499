@@ -4,10 +4,12 @@
  * Collects a variable-length sequence during a user turn and classifies it
  * using the PyTorch GRU model (python/sequence_infer.py).
  *
- * The script streams Johnny-Five sensor data while the user speaks. Press Enter
- * to start recording, perform the interaction, then press Enter again to stop.
- * The captured sequence is sent to the Python inference helper, and the
- * predicted label is logged to the console.
+ * Adds activity segmentation:
+ * - Frame-wise activity score (pressure + accel + gyro)
+ * - Simple recent-weighted running average (EMA 느낌) for smoothing
+ * - Hysteresis high/low thresholds to turn activity on/off
+ * - Padding, short-burst drop, gap merge
+ * - Each detected block is sent separately to the Python model; idle-only input is skipped.
  */
 
 import { spawn } from "child_process";
@@ -24,8 +26,7 @@ const { Board, Sensor, IMU } = five;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PIPELINE_ROOT = path.resolve(__dirname, "..");
-const MODULE_ROOT = path.resolve(__dirname, "..", "..");
+const MODULE_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_PYTHON = "python";
 const FEATURE_NAMES = ["pressure_delta", "ax", "ay", "az", "gx", "gy", "gz"];
 
@@ -42,17 +43,17 @@ program
   .option(
     "--infer-script <path>",
     "Path to python/sequence_infer.py",
-    path.resolve(PIPELINE_ROOT, "python", "sequence_infer.py"),
+    path.resolve(MODULE_ROOT, "sequence_pipeline", "python", "sequence_infer.py"),
   )
   .option(
     "--model <path>",
     "Path to sequence_classifier.pt",
-    path.resolve(PIPELINE_ROOT, "models", "sequence_classifier.pt"),
+    path.resolve(MODULE_ROOT, "sequence_pipeline", "models", "sequence_classifier.pt"),
   )
   .option(
     "--config <path>",
     "Path to sequence_config.json",
-    path.resolve(PIPELINE_ROOT, "models", "sequence_config.json"),
+    path.resolve(MODULE_ROOT, "sequence_pipeline", "models", "sequence_config.json"),
   )
   .option("--python-device <device>", "Device passed to sequence_infer.py (cpu/cuda/mps)", "cpu")
   .option(
@@ -67,6 +68,21 @@ program
   .option("--idle-pressure-mean <value>", "Abs mean pressure threshold for auto idle", (value) => parseFloat(value), 1.0)
   .option("--idle-accel-std <value>", "Accel std threshold for auto idle", (value) => parseFloat(value), 0.1)
   .option("--idle-gyro-std <value>", "Gyro std threshold for auto idle", (value) => parseFloat(value), 10.0)
+  .option("--activity-high <value>", "High threshold for activity on/off", (value) => parseFloat(value), 0.8)
+  .option("--activity-low <value>", "Low threshold for activity on/off", (value) => parseFloat(value), 0.4)
+  .option(
+    "--activity-smooth <value>",
+    "Smoothing factor (0~1, recent values get more weight)",
+    (value) => parseFloat(value),
+    0.3,
+  )
+  .option("--activity-min-frames <count>", "Minimum frames to keep an activity block", (value) => parseInt(value, 10), 5)
+  .option("--activity-pad-frames <count>", "Frames of context to pad around each block", (value) => parseInt(value, 10), 3)
+  .option("--activity-gap-merge <count>", "Merge blocks if idle gap <= this", (value) => parseInt(value, 10), 2)
+  .option("--activity-weight-pressure <value>", "Weight for pressure in activity score", (value) => parseFloat(value), 1.0)
+  .option("--activity-weight-accel <value>", "Weight for accel magnitude in activity score", (value) => parseFloat(value), 0.8)
+  .option("--activity-weight-gyro <value>", "Weight for gyro magnitude in activity score", (value) => parseFloat(value), 0.5)
+  .option("--disable-activity-segmentation", "Send whole sequence without idle trimming", false)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
   .option("--quiet", "Suppress interim console logs", false);
 
@@ -90,14 +106,14 @@ async function waitForSensors(conditionFn, timeoutMs = 8000) {
   const deadline = Date.now() + timeoutMs;
   while (!conditionFn()) {
     if (Date.now() > deadline) {
-      throw new Error("센서에서 값을 읽어오지 못했습니다. 연결 상태를 확인하세요.");
+      throw new Error("Sensors did not report data in time. Check wiring/port and try again.");
     }
     await delay(50);
   }
 }
 
 async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
-  console.log(`\n압력 기준을 측정합니다. ${samples}개의 샘플 동안 베개를 건드리지 마세요.`);
+  console.log(`\nCalibrating pressure baseline with ${samples} samples...`);
   let collected = 0;
   let sum = 0;
   while (collected < samples) {
@@ -109,7 +125,7 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
     await delay(sampleDelayMs);
   }
   const baseline = sum / samples;
-  console.log(`기준 압력: ${baseline.toFixed(2)}`);
+  console.log(`Pressure baseline: ${baseline.toFixed(2)}`);
   return baseline;
 }
 
@@ -128,26 +144,25 @@ function runPythonInference({
     if (lowPassWindow && Number.isInteger(lowPassWindow) && lowPassWindow > 1) {
       args.push("--low-pass-window", String(lowPassWindow));
     }
-  if (autoIdleOptions?.enabled) {
-    args.push("--auto-idle", "--idle-label", autoIdleOptions.label);
-    args.push("--idle-pressure-std", String(autoIdleOptions.pressureStd));
-    args.push("--idle-pressure-mean", String(autoIdleOptions.pressureMean));
-    args.push("--idle-accel-std", String(autoIdleOptions.accelStd));
+    if (autoIdleOptions?.enabled) {
+      args.push("--auto-idle", "--idle-label", autoIdleOptions.label);
+      args.push("--idle-pressure-std", String(autoIdleOptions.pressureStd));
+      args.push("--idle-pressure-mean", String(autoIdleOptions.pressureMean));
+      args.push("--idle-accel-std", String(autoIdleOptions.accelStd));
       args.push("--idle-gyro-std", String(autoIdleOptions.gyroStd));
     }
-  const proc = spawn(pythonCmd, args, {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  proc.stdout.on("data", (chunk) => {
-    stdout += chunk.toString();
-  });
-  proc.stderr.on("data", (chunk) => {
-    // Echo Python stderr to help debug (e.g., auto-idle stats) while still capturing for errors.
-    process.stderr.write(chunk);
-    stderr += chunk.toString();
-  });
+    const proc = spawn(pythonCmd, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on("data", (chunk) => {
+      process.stderr.write(chunk); // show Python stderr (e.g., auto-idle stats)
+      stderr += chunk.toString();
+    });
     proc.on("error", (err) => reject(err));
     proc.on("close", (code) => {
       if (code !== 0) {
@@ -161,10 +176,75 @@ function runPythonInference({
   });
 }
 
+function computeActivityScores(frames, opts) {
+  const { weightPressure, weightAccel, weightGyro, smoothFactor } = opts;
+  // Use the first frame as a simple reference to see "change amount".
+  const first = frames[0];
+  const basePressure = Math.abs(first[0]) || 1e-6;
+  const baseAccel = Math.sqrt(first[1] * first[1] + first[2] * first[2] + first[3] * first[3]) || 1e-6;
+  const baseGyro = Math.sqrt(first[4] * first[4] + first[5] * first[5] + first[6] * first[6]) || 1e-6;
+
+  let smooth = 0;
+  const scores = [];
+  for (const frame of frames) {
+    const [dp, ax, ay, az, gx, gy, gz] = frame;
+    const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
+    const gyroMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
+    const pressureTerm = Math.abs(dp) / basePressure;
+    const accelTerm = Math.abs(accelMag - baseAccel) / baseAccel;
+    const gyroTerm = Math.abs(gyroMag - baseGyro) / baseGyro;
+    const raw = weightPressure * pressureTerm + weightAccel * accelTerm + weightGyro * gyroTerm;
+    // Simple recent-weighted running average (EMA 느낌): smooth <- smoothFactor * old + (1 - smoothFactor) * raw
+    smooth = smoothFactor * smooth + (1 - smoothFactor) * raw;
+    scores.push(smooth);
+  }
+  return scores;
+}
+
+function extractBlocks(frames, scores, opts) {
+  const { high, low, minFrames, padFrames, gapMerge } = opts;
+  const blocks = [];
+  let active = false;
+  let start = 0;
+  scores.forEach((score, idx) => {
+    if (!active && score >= high) {
+      active = true;
+      start = idx;
+    } else if (active && score <= low) {
+      blocks.push([start, idx]);
+      active = false;
+    }
+  });
+  if (active) {
+    blocks.push([start, scores.length - 1]);
+  }
+
+  // Pad, drop short, and merge close blocks
+  const padded = blocks
+    .map(([s, e]) => [Math.max(0, s - padFrames), Math.min(frames.length - 1, e + padFrames)])
+    .filter(([s, e]) => e - s + 1 >= minFrames);
+
+  const merged = [];
+  for (const seg of padded) {
+    if (!merged.length) {
+      merged.push(seg);
+      continue;
+    }
+    const last = merged[merged.length - 1];
+    if (seg[0] - last[1] <= gapMerge) {
+      last[1] = Math.max(last[1], seg[1]);
+    } else {
+      merged.push(seg);
+    }
+  }
+  return merged;
+}
+
+
 const SERIAL_PORT = options.port?.trim() || process.env.SERIAL_PORT?.trim();
 const boardOptions = { repl: false };
 if (SERIAL_PORT) {
-  console.log(`포트 지정: ${SERIAL_PORT}`);
+  console.log(`Using serial port: ${SERIAL_PORT}`);
   boardOptions.port = SERIAL_PORT;
 }
 
@@ -172,9 +252,7 @@ const board = new Board(boardOptions);
 let shuttingDown = false;
 
 function shutdown(code = 0) {
-  if (shuttingDown) {
-    return;
-  }
+  if (shuttingDown) return;
   shuttingDown = true;
   rl.close();
   try {
@@ -186,17 +264,17 @@ function shutdown(code = 0) {
 }
 
 process.on("SIGINT", () => {
-  console.log("\n사용자 중단 요청을 받았습니다. 연결을 정리합니다.");
+  console.log("\nStopping (Ctrl+C).");
   shutdown(0);
 });
 
 board.on("error", (err) => {
-  console.error("보드 오류:", err);
+  console.error("Board error:", err);
   shutdown(1);
 });
 
 board.on("ready", async () => {
-  console.log("Johnny-Five 보드 연결 완료. 센서를 준비합니다...");
+  console.log("Johnny-Five board ready. Initializing sensors...");
   const pressureSensor = new Sensor({
     pin: options.pressurePin,
     freq: options.sampleMs,
@@ -229,15 +307,15 @@ board.on("ready", async () => {
   try {
     await waitForSensors(() => latestPressure !== null && latestAccel !== null && latestGyro !== null);
     const baseline = await calibrateBaseline(() => latestPressure, options.baselineSamples, options.sampleMs);
-    console.log("\n사용자 턴을 녹화하려면 Enter를 누르세요. (종료: Ctrl+C)");
+    console.log("\nReady. Press Enter to start recording. (Ctrl+C to exit)");
 
     while (true) {
-      await waitForLine("새 턴을 시작하려면 Enter를 누르세요.");
-      console.log("녹화를 시작했습니다. 사용자의 음성과 동작을 수행하세요. 끝나면 다시 Enter를 누르세요.");
+      await waitForLine("Press Enter to start a turn.");
+      console.log("Recording... perform the interaction, then press Enter to stop.");
 
       let stopRequested = false;
       const frames = [];
-      const stopPromise = waitForLine("턴을 종료하려면 Enter를 누르세요.").then(() => {
+      const stopPromise = waitForLine("Press Enter to stop recording.").then(() => {
         stopRequested = true;
       });
 
@@ -255,7 +333,7 @@ board.on("ready", async () => {
           frames.push(frame);
           if (!options.quiet && frames.length % Math.max(1, Math.floor(1000 / options.sampleMs)) === 0) {
             console.log(
-              `샘플 ${frames.length}개 수집 중... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
+              `frames=${frames.length} dp=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
             );
           }
         }
@@ -264,53 +342,100 @@ board.on("ready", async () => {
       await stopPromise;
 
       if (!frames.length) {
-        console.warn("수집된 샘플이 없습니다. 다시 시도하세요.");
+        console.warn("No frames captured. Try again.");
         continue;
       }
-      const payload = {
+
+      const basePayload = {
         label: "unknown",
         sample_ms: options.sampleMs,
         feature_names: FEATURE_NAMES,
         features: frames,
       };
 
-      console.log("PyTorch 추론을 실행합니다...");
-      try {
-        const inferenceStart = performance.now();
-        const output = await runPythonInference({
-          pythonCmd: options.python,
-          scriptPath: options.inferScript,
-          modelPath: options.model,
-          configPath: options.config,
-          payload,
-          lowPassWindow: options.lowPassWindow,
-          autoIdleOptions: options.autoIdle
-            ? {
-                enabled: true,
-                label: options.idleLabel,
-                pressureStd: options.idlePressureStd,
-                pressureMean: options.idlePressureMean,
-                accelStd: options.idleAccelStd,
-                gyroStd: options.idleGyroStd,
-              }
-            : { enabled: false },
-          pythonDevice: options.pythonDevice,
+      let blocks = [[0, frames.length - 1]];
+      if (!options.disableActivitySegmentation && frames.length > 1) {
+        const scores = computeActivityScores(frames, {
+          weightPressure: options.activityWeightPressure,
+          weightAccel: options.activityWeightAccel,
+          weightGyro: options.activityWeightGyro,
+          smoothFactor: options.activitySmooth,
         });
-        const inferenceElapsed = performance.now() - inferenceStart;
-        try {
-          const parsed = JSON.parse(output);
-          console.log(
-            `예측 결과: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | 추론 ${inferenceElapsed.toFixed(1)}ms`,
-          );
-        } catch (parseErr) {
-          console.log(`Python 출력 (추론 ${inferenceElapsed.toFixed(1)}ms):`, output);
+        blocks = extractBlocks(frames, scores, {
+          high: options.activityHigh,
+          low: options.activityLow,
+          minFrames: options.activityMinFrames,
+          padFrames: options.activityPadFrames,
+          gapMerge: options.activityGapMerge,
+        });
+        if (options.activityDebugLog) {
+          const debugPayload = {
+            sample_ms: options.sampleMs,
+            frame_count: frames.length,
+            scores,
+            thresholds: { high: options.activityHigh, low: options.activityLow },
+            blocks,
+          };
+          const debugPath = path.resolve(options.activityDebugLog);
+          await fs.promises.writeFile(debugPath, JSON.stringify(debugPayload, null, 2), "utf8");
+          if (!options.quiet) {
+            console.log(`Activity debug log written: ${debugPath}`);
+          }
         }
-      } catch (inferErr) {
-        console.error("추론 중 오류:", inferErr);
+        if (!blocks.length) {
+          console.warn("No activity blocks detected (idle only). Skipping inference.");
+          continue;
+        }
+        if (!options.quiet) {
+          console.log(`Detected ${blocks.length} activity block(s).`);
+        }
+      }
+
+      for (let i = 0; i < blocks.length; i += 1) {
+        const [start, end] = blocks[i];
+        const segment = frames.slice(start, end + 1);
+        const payload = { ...basePayload, features: segment };
+        const durationSec = ((end - start + 1) * options.sampleMs) / 1000;
+        console.log(
+          `PyTorch inference on block ${i + 1}/${blocks.length} (frames=${segment.length}, ${durationSec.toFixed(2)}s)...`,
+        );
+        try {
+          const inferenceStart = performance.now();
+          const output = await runPythonInference({
+            pythonCmd: options.python,
+            scriptPath: options.inferScript,
+            modelPath: options.model,
+            configPath: options.config,
+            payload,
+            lowPassWindow: options.lowPassWindow,
+            autoIdleOptions: options.autoIdle
+              ? {
+                  enabled: true,
+                  label: options.idleLabel,
+                  pressureStd: options.idlePressureStd,
+                  pressureMean: options.idlePressureMean,
+                  accelStd: options.idleAccelStd,
+                  gyroStd: options.idleGyroStd,
+                }
+              : { enabled: false },
+            pythonDevice: options.pythonDevice,
+          });
+          const inferenceElapsed = performance.now() - inferenceStart;
+          try {
+            const parsed = JSON.parse(output);
+            console.log(
+              `Block ${i + 1}: ${parsed.label} (${(parsed.probability * 100).toFixed(1)}%) | ${inferenceElapsed.toFixed(1)}ms`,
+            );
+          } catch (parseErr) {
+            console.log(`Python output (block ${i + 1}, ${inferenceElapsed.toFixed(1)}ms):`, output);
+          }
+        } catch (inferErr) {
+          console.error(`Block ${i + 1} inference error:`, inferErr);
+        }
       }
     }
   } catch (err) {
-    console.error("시퀀스 추론 중 오류:", err);
+    console.error("Fatal error in inference loop:", err);
     shutdown(1);
   }
 });

@@ -200,3 +200,36 @@ cat my_sequence.json | python sequence_infer.py --model ... --config ...
 - **시리얼 타임아웃**: 본래 모듈과 동일하게 StandardFirmata가 올라가 있는지, `SERIAL_PORT` 설정이 맞는지 확인하세요.
 
 이제 음성 턴 길이와 무관하게 전체 시퀀스를 학습/추론할 수 있으므로, PillowMate의 실사용 UX와 더 자연스럽게 맞출 수 있습니다.
+
+## 6. Idle / Activity 처리 상세
+
+- 자동 Idle 단락 (`--auto-idle`)
+  - 입력 전체를 한 번에 검사해 압력/IMU 표준편차와 압력 절대평균이 임계값 이하이면 곧바로 `--idle-label`을 반환하고 모델을 건너뜁니다.
+  - 임계값 옵션: `--idle-pressure-std`, `--idle-pressure-mean`, `--idle-accel-std`, `--idle-gyro-std` (정적 상태의 실제 노이즈 수준에 맞게 올리거나 내리세요).
+  - 노이즈가 많을 땐 `--low-pass-window`로 간단한 이동평균을 적용한 뒤 auto-idle을 평가하면 더 잘 동작합니다.
+
+- 활동 블록 세분화 (`activity segmentation`)
+  - 프레임마다 activity score를 만듭니다: 압력 변화량, 가속도 크기 변화량, 자이로 크기 변화량을 가중합(`--activity-weight-pressure/accel/gyro`)으로 계산.
+  - 점수는 최근 값에 더 무게를 주는 누적 평균(EMA 느낌, `--activity-smooth`)으로 부드럽게 합니다.
+  - 히스테리시스 임계(`--activity-high` 진입, `--activity-low` 이탈)로 on/off를 결정해 활동 구간을 찾습니다.
+  - 후처리: 최소 길이 미만은 버림(`--activity-min-frames`), 앞뒤 컨텍스트 패딩(`--activity-pad-frames`), 짧은 idle 간격은 병합(`--activity-gap-merge`).
+  - 검출된 블록만 모델에 보내며, 활동 블록이 없으면 idle로 간주하고 추론을 건너뜁니다.
+  - `--disable-activity-segmentation`으로 끄면 전체 시퀀스를 그대로 모델에 보냅니다.
+
+- 튜닝 팁
+  - 정적 상태 노이즈가 크면 `--activity-high/low`를 올리거나 가중치 비율을 조정하세요. tap처럼 짧은 동작을 놓치면 `--activity-min-frames`를 줄이고 `--activity-pad-frames`를 늘립니다.
+  - 센서 오프셋이 크면 auto-idle 임계와 activity 임계 둘 다 노이즈에 맞춰 조정하거나, 가동 직후 안정화 시간을 두고 캡처하세요.
+
+- 예시
+  ```bash
+  node node/run_sequence_inference.js \
+    --low-pass-window 5 \
+    --auto-idle --idle-label idle \
+    --idle-pressure-std 20 --idle-pressure-mean 40 \
+    --idle-accel-std 0.1 --idle-gyro-std 5 \
+    --activity-high 0.9 --activity-low 0.5 \
+    --activity-smooth 0.3 \
+    --activity-min-frames 5 --activity-pad-frames 3 --activity-gap-merge 2 \
+    --activity-weight-pressure 1.0 --activity-weight-accel 0.8 --activity-weight-gyro 0.5
+  ```
+
