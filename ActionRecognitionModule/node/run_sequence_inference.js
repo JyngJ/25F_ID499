@@ -83,6 +83,7 @@ program
   .option("--activity-weight-accel <value>", "Weight for accel magnitude in activity score", (value) => parseFloat(value), 0.8)
   .option("--activity-weight-gyro <value>", "Weight for gyro magnitude in activity score", (value) => parseFloat(value), 0.5)
   .option("--disable-activity-segmentation", "Send whole sequence without idle trimming", false)
+  .option("--activity-plot", "Plot activity score + thresholds + blocks with nodeplotlib", false)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
   .option("--quiet", "Suppress interim console logs", false);
 
@@ -208,6 +209,7 @@ function computeActivityScores(frames, opts) {
 
   let smooth = 0;
   const scores = [];
+  const terms = collectTerms ? [] : null;
   for (const frame of frames) {
     const [dp, ax, ay, az, gx, gy, gz] = frame;
     const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
@@ -219,8 +221,11 @@ function computeActivityScores(frames, opts) {
     // Simple recent-weighted running average (EMA 느낌): smooth <- smoothFactor * old + (1 - smoothFactor) * raw
     smooth = smoothFactor * smooth + (1 - smoothFactor) * raw;
     scores.push(smooth);
+    if (terms) {
+      terms.push({ pressureTerm, accelTerm, gyroTerm });
+    }
   }
-  return scores;
+  return { scores, terms };
 }
 
 function extractBlocks(frames, scores, opts) {
@@ -262,6 +267,81 @@ function extractBlocks(frames, scores, opts) {
   return merged;
 }
 
+async function plotActivity(scores, blocks, { high, low, terms }) {
+  let plotting;
+  try {
+    plotting = await import("nodeplotlib");
+  } catch (err) {
+    console.warn("nodeplotlib is not installed. Run `npm install nodeplotlib` to enable plotting.");
+    return;
+  }
+  const x = scores.map((_, idx) => idx);
+  const traces = [
+    { x, y: scores, type: "scatter", mode: "lines", name: "activity score" },
+    {
+      x: [0, scores.length - 1],
+      y: [high, high],
+      type: "scatter",
+      mode: "lines",
+      line: { dash: "dash", color: "red" },
+      name: "high",
+    },
+    {
+      x: [0, scores.length - 1],
+      y: [low, low],
+      type: "scatter",
+      mode: "lines",
+      line: { dash: "dot", color: "orange" },
+      name: "low",
+    },
+  ];
+  if (terms && terms.length === scores.length) {
+    traces.push({
+      x,
+      y: terms.map((t) => t.pressureTerm),
+      type: "scatter",
+      mode: "lines",
+      line: { color: "blue", dash: "dot" },
+      name: "pressure term",
+    });
+    traces.push({
+      x,
+      y: terms.map((t) => t.accelTerm),
+      type: "scatter",
+      mode: "lines",
+      line: { color: "purple", dash: "dot" },
+      name: "accel term",
+    });
+    traces.push({
+      x,
+      y: terms.map((t) => t.gyroTerm),
+      type: "scatter",
+      mode: "lines",
+      line: { color: "brown", dash: "dot" },
+      name: "gyro term",
+    });
+  }
+  const yMin = Math.min(...scores, low, high);
+  const yMax = Math.max(...scores, low, high);
+  const shapes = blocks.map(([s, e]) => ({
+    type: "rect",
+    xref: "x",
+    yref: "y",
+    x0: s,
+    x1: e,
+    y0: yMin,
+    y1: yMax,
+    fillcolor: "rgba(0,200,0,0.1)",
+    line: { width: 0 },
+  }));
+  const layout = {
+    title: "Activity score with thresholds/blocks",
+    xaxis: { title: "frame" },
+    yaxis: { title: "score" },
+    shapes,
+  };
+  plotting.plot(traces, layout);
+}
 
 const SERIAL_PORT = options.port?.trim() || process.env.SERIAL_PORT?.trim();
 const boardOptions = { repl: false };
@@ -383,7 +463,7 @@ board.on("ready", async () => {
 
       let blocks = [[0, frames.length - 1]];
       if (!options.disableActivitySegmentation && frames.length > 1) {
-        const scores = computeActivityScores(frames, {
+        const { scores, terms } = computeActivityScores(frames, {
           weightPressure: options.activityWeightPressure,
           weightAccel: options.activityWeightAccel,
           weightGyro: options.activityWeightGyro,
@@ -402,19 +482,8 @@ board.on("ready", async () => {
           padFrames: options.activityPadFrames,
           gapMerge: options.activityGapMerge,
         });
-        if (options.activityDebugLog) {
-          const debugPayload = {
-            sample_ms: options.sampleMs,
-            frame_count: frames.length,
-            scores,
-            thresholds: { high: options.activityHigh, low: options.activityLow },
-            blocks,
-          };
-          const debugPath = path.resolve(options.activityDebugLog);
-          await fs.promises.writeFile(debugPath, JSON.stringify(debugPayload, null, 2), "utf8");
-          if (!options.quiet) {
-            console.log(`Activity debug log written: ${debugPath}`);
-          }
+        if (options.activityPlot) {
+          await plotActivity(scores, blocks, { high: options.activityHigh, low: options.activityLow, terms });
         }
         if (!blocks.length) {
           console.warn("No activity blocks detected (idle only). Skipping inference.");
