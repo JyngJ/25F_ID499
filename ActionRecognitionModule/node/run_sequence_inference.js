@@ -85,7 +85,8 @@ program
   .option("--disable-activity-segmentation", "Send whole sequence without idle trimming", false)
   .option("--activity-plot", "Plot activity score + thresholds + blocks with nodeplotlib", false)
   .option("--port <path>", "Serial port override (defaults to SERIAL_PORT/.env)")
-  .option("--quiet", "Suppress interim console logs", false);
+  .option("--quiet", "Suppress interim console logs", false)
+  .option("--stream-sensors", "Continuously print sensor readings", false);
 
 const options = program.parse(process.argv).opts();
 
@@ -409,6 +410,9 @@ board.on("ready", async () => {
   try {
     await waitForSensors(() => latestPressure !== null && latestAccel !== null && latestGyro !== null);
     const baseline = await calibrateBaseline(() => latestPressure, options.baselineSamples, options.sampleMs);
+    console.log("\n사용자 턴을 녹화하려면 Enter를 누르세요. (종료: Ctrl+C)");
+
+    let sensorLogTick = 0;
     const motionBaselines = await calibrateMotionBaseline(
       () => latestAccel,
       () => latestGyro,
@@ -441,8 +445,20 @@ board.on("ready", async () => {
           frames.push(frame);
           if (!options.quiet && frames.length % Math.max(1, Math.floor(1000 / options.sampleMs)) === 0) {
             console.log(
-              `frames=${frames.length} dp=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
+              `샘플 ${frames.length}개 수집 중... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
             );
+          }
+          if (options.streamSensors) {
+            sensorLogTick += 1;
+            if (sensorLogTick % Math.max(1, Math.floor(200 / options.sampleMs)) === 0) {
+              console.log(
+                `[sensor] dp=${frame[0].toFixed(1)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(
+                  2,
+                )} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(
+                  2,
+                )} gz=${frame[6].toFixed(2)}`,
+              );
+            }
           }
         }
         await delay(options.sampleMs);

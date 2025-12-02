@@ -20,7 +20,7 @@ export const config = {
     end_threshold_duration: "100000", // milliseconds
     end_threshold_volume: "0.5%",
     // Maximum recording time (milliseconds)
-    max_recording_time: "30000", // milliseconds
+    max_recording_time: "5000", // milliseconds
   },
   ///////////////////////////////////////////////////////////////////
 

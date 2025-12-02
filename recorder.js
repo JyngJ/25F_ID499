@@ -1,6 +1,7 @@
 import fs from "fs";
 import mic from "mic";
 import WaveFilePackage from "wavefile";
+import { updateMicDisplay, attachStatusDisplay } from "./status_display.js";
 const { WaveFile } = WaveFilePackage;
 
 const SAMPLE_RATE = 16000;
@@ -22,16 +23,19 @@ function computeRms(buffer) {
   return rms / 32768;
 }
 
-function renderLevel(level) {
+function renderLevel(level, { active = true } = {}) {
+  if (!active) {
+    updateMicDisplay("🎧 음성 입력 대기 중...");
+    return;
+  }
   const clamped = Math.max(0, Math.min(1, level));
   const barLength = 30;
   const filled = Math.round(clamped * barLength);
-  process.stdout.write(
-    `\r🎙  Input level: [${"█".repeat(filled).padEnd(barLength, " ")}] ${(clamped * 100).toFixed(
-      0,
-    )}%`,
-  );
   updateLedForLevel(clamped);
+  const micLine = `🎙 Input [${"█".repeat(filled).padEnd(barLength, " ")}] ${(
+    clamped * 100
+  ).toFixed(0)}%`;
+  updateMicDisplay(micLine);
 }
 
 let ledAdapter = null;
@@ -58,17 +62,17 @@ function updateLedForLevel(level) {
     // 실제 LED 어댑터가 주입된 경우, 해당 장치에 상태 전달
     ledAdapter.setState(payload);
   } else {
-    // 아직 하드웨어가 연결되지 않았다면 콘솔에 예시 상태만 출력
-    process.stdout.write(`  | LED preview -> brightness:${brightness} color:[${color.join(",")}]`);
+    return;
   }
 }
 
 export function recordAudio(outputFile, options = {}) {
   return new Promise((resolve, reject) => {
+    attachStatusDisplay();
     const startThreshold = options.startThreshold ?? 0.02;
     const endThreshold = options.endThreshold ?? 0.015;
-    const startThresholdDuration = options.startThresholdDuration ?? 300;
-    const minSilenceDuration = options.minSilenceDuration ?? 800;
+    const startThresholdDurationMs = options.startThresholdDuration ?? 300;
+    const minSilenceDurationMs = options.minSilenceDuration ?? 800;
     const maxDuration = options.maxDuration ?? 10000;
 
     console.log(
@@ -89,11 +93,13 @@ export function recordAudio(outputFile, options = {}) {
 
     const buffers = [];
     let recordingStarted = false;
-    let aboveStartMs = 0;
-    let belowEndMs = 0;
+    let aboveStartSec = 0;
+    let belowEndSec = 0;
     let recordedMs = 0;
     let finished = false;
     let levelTimer = null;
+    let visualizeLevel = false;
+    const onSpeechStart = options.onSpeechStart;
 
     const stopRecording = (reason) => {
       if (finished) return;
@@ -125,20 +131,25 @@ export function recordAudio(outputFile, options = {}) {
 
     micInputStream.on("data", (chunk) => {
       const rms = computeRms(chunk);
-      renderLevel(rms);
+      renderLevel(rms, { active: visualizeLevel });
 
       const chunkMs = (chunk.length / BYTES_PER_SAMPLE / SAMPLE_RATE) * 1000;
+      const chunkSec = chunkMs / 1000;
 
       if (!recordingStarted) {
         if (rms >= startThreshold) {
-          aboveStartMs += chunkMs;
-          if (aboveStartMs >= startThresholdDuration) {
+          aboveStartSec += chunkSec;
+          if (aboveStartSec >= startThresholdDurationMs / 1000) {
             recordingStarted = true;
-            belowEndMs = 0;
+            visualizeLevel = true;
+            belowEndSec = 0;
             console.log("\n▶️  음성 감지됨. 녹음을 시작합니다.");
+            if (typeof onSpeechStart === "function") {
+              onSpeechStart();
+            }
           }
         } else {
-          aboveStartMs = 0;
+          aboveStartSec = 0;
         }
       }
 
@@ -147,12 +158,12 @@ export function recordAudio(outputFile, options = {}) {
         recordedMs += chunkMs;
 
         if (rms <= endThreshold) {
-          belowEndMs += chunkMs;
-          if (belowEndMs >= minSilenceDuration) {
+          belowEndSec += chunkSec;
+          if (belowEndSec >= minSilenceDurationMs / 1000) {
             stopRecording("침묵 감지");
           }
         } else {
-          belowEndMs = 0;
+          belowEndSec = 0;
         }
 
         if (recordedMs >= maxDuration) {
