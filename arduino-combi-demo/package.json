@@ -1,0 +1,16 @@
+{
+  "name": "arduino-combi-demo",
+  "version": "1.0.0",
+  "description": "Demo for MPU6050, Velostat, and NeoPixel with Johnny-Five",
+  "main": "main.js",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "firmata": "^2.2.0",
+    "johnny-five": "^2.1.0",
+    "keypress": "^0.2.1",
+    "node-pixel": "^0.10.2",
+    "serialport": "9.2.8"
+  }
+}
