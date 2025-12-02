@@ -215,6 +215,7 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
 - 내부적으로 `ActionRecognitionModule/node/run_sequence_inference.js`를 자식 프로세스로 띄워 센서 시퀀스를 수집하고, STT 결과에는 `[Detected action: ...]` 메타 정보를 덧붙여 GPT에게 전달합니다.
 
 ### 주요 옵션/동작
+
 - `recorder.js`는 `mic` 모듈을 이용해 실시간 입력 레벨(rms)을 ASCII 바 형태로 출력합니다. 추후 `registerLedAdapter()`로 LED 표시 장치를 연결할 수 있도록 스켈레톤을 제공하고 있습니다.
 - `voice_chat_loop_with_action.js` 상단의 `ACTION_OPTIONS`에서 행동 인식 모델 경로/옵션(로우패스, idle 휴리스틱, `--python-device` 등)을 조정할 수 있습니다.
 - `voice_chat_loop_with_action.js` 내부 루프 구조:
@@ -224,5 +225,41 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
   4. GPT 응답을 TTS로 재생하고 로그에 행동/LED 패턴을 출력.
 
 ### 에러 처리/중단
+
 - 행동 인식 프로세스는 `ActionRecognizer` 클래스로 관리되며, 각 턴마다 Enter 신호를 대신 보내고 결과 라인을 파싱합니다. 타임아웃(15초)이 발생하면 `idle` 라벨을 반환하도록 기본 처리.
 - `Ctrl+C` 등으로 종료 시, 백그라운드 프로세스들을 정리한 후 종료되도록 되어 있습니다.
+
+## 7. Idle / Activity 처리 상세
+
+- 자동 Idle 단락 (`--auto-idle`)
+
+  - 입력 전체를 한 번에 검사해 압력/IMU 표준편차와 압력 절대평균이 임계값 이하이면 곧바로 `--idle-label`을 반환하고 모델을 건너뜁니다.
+  - 임계값 옵션: `--idle-pressure-std`, `--idle-pressure-mean`, `--idle-accel-std`, `--idle-gyro-std` (정적 상태의 실제 노이즈 수준에 맞게 올리거나 내리세요).
+  - 노이즈가 많을 땐 `--low-pass-window`로 간단한 이동평균을 적용한 뒤 auto-idle을 평가하면 더 잘 동작합니다.
+
+- 활동 블록 세분화 (`activity segmentation`)
+
+  - 프레임마다 activity score를 만듭니다: 압력 변화량, 가속도 크기 변화량, 자이로 크기 변화량을 가중합(`--activity-weight-pressure/accel/gyro`)으로 계산.
+  - 점수는 최근 값에 더 무게를 주는 누적 평균(EMA 느낌, `--activity-smooth`)으로 부드럽게 합니다.
+  - 히스테리시스 임계(`--activity-high` 진입, `--activity-low` 이탈)로 on/off를 결정해 활동 구간을 찾습니다.
+  - 후처리: 최소 길이 미만은 버림(`--activity-min-frames`), 앞뒤 컨텍스트 패딩(`--activity-pad-frames`), 짧은 idle 간격은 병합(`--activity-gap-merge`).
+  - 검출된 블록만 모델에 보내며, 활동 블록이 없으면 idle로 간주하고 추론을 건너뜁니다.
+  - `--disable-activity-segmentation`으로 끄면 전체 시퀀스를 그대로 모델에 보냅니다.
+
+- 튜닝 팁
+
+  - 정적 상태 노이즈가 크면 `--activity-high/low`를 올리거나 가중치 비율을 조정하세요. tap처럼 짧은 동작을 놓치면 `--activity-min-frames`를 줄이고 `--activity-pad-frames`를 늘립니다.
+  - 센서 오프셋이 크면 auto-idle 임계와 activity 임계 둘 다 노이즈에 맞춰 조정하거나, 가동 직후 안정화 시간을 두고 캡처하세요.
+
+- 예시
+  ```bash
+  node node/run_sequence_inference.js \
+    --low-pass-window 5 \
+    --auto-idle --idle-label idle \
+    --idle-pressure-std 20 --idle-pressure-mean 40 \
+    --idle-accel-std 0.1 --idle-gyro-std 5 \
+    --activity-high 0.9 --activity-low 0.5 \
+    --activity-smooth 0.3 \
+    --activity-min-frames 5 --activity-pad-frames 3 --activity-gap-merge 2 \
+    --activity-weight-pressure 1.0 --activity-weight-accel 0.8 --activity-weight-gyro 0.5
+  ```
