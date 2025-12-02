@@ -230,6 +230,7 @@ cat my_sequence.json | python sequence_infer.py --model ... --config ...
     --activity-high 0.9 --activity-low 0.5 \
     --activity-smooth 0.3 \
     --activity-min-frames 5 --activity-pad-frames 3 --activity-gap-merge 2 \
-    --activity-weight-pressure 1.0 --activity-weight-accel 0.8 --activity-weight-gyro 0.5
+    --activity-weight-pressure 1.0 --activity-weight-accel 0.8 --activity-weight-gyro 0.5 \
+    --activity-plot
   ```
 
