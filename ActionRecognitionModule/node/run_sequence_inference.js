@@ -129,6 +129,29 @@ async function calibrateBaseline(readPressure, samples, sampleDelayMs) {
   return baseline;
 }
 
+async function calibrateMotionBaseline(readAccel, readGyro, samples, sampleDelayMs) {
+  console.log(`\nCalibrating IMU baseline with ${samples} samples...`);
+  let collected = 0;
+  let accelSum = 0;
+  let gyroSum = 0;
+  while (collected < samples) {
+    const accel = readAccel();
+    const gyro = readGyro();
+    if (accel && gyro) {
+      const accelMag = Math.sqrt(accel.x * accel.x + accel.y * accel.y + accel.z * accel.z);
+      const gyroMag = Math.sqrt(gyro.x * gyro.x + gyro.y * gyro.y + gyro.z * gyro.z);
+      accelSum += accelMag;
+      gyroSum += gyroMag;
+      collected += 1;
+    }
+    await delay(sampleDelayMs);
+  }
+  const accelBaseline = accelSum / Math.max(collected, 1);
+  const gyroBaseline = gyroSum / Math.max(collected, 1);
+  console.log(`IMU baseline: |accel|=${accelBaseline.toFixed(3)}, |gyro|=${gyroBaseline.toFixed(3)}`);
+  return { accelBaseline, gyroBaseline };
+}
+
 function runPythonInference({
   pythonCmd,
   scriptPath,
@@ -177,12 +200,11 @@ function runPythonInference({
 }
 
 function computeActivityScores(frames, opts) {
-  const { weightPressure, weightAccel, weightGyro, smoothFactor } = opts;
-  // Use the first frame as a simple reference to see "change amount".
-  const first = frames[0];
-  const basePressure = Math.abs(first[0]) || 1e-6;
-  const baseAccel = Math.sqrt(first[1] * first[1] + first[2] * first[2] + first[3] * first[3]) || 1e-6;
-  const baseGyro = Math.sqrt(first[4] * first[4] + first[5] * first[5] + first[6] * first[6]) || 1e-6;
+  const { weightPressure, weightAccel, weightGyro, smoothFactor, baselines, collectTerms } = opts;
+  // Use calibrated baselines (pressure already baseline-subtracted).
+  const basePressure = Math.max(1e-6, Math.abs(baselines.pressure));
+  const baseAccel = Math.max(1e-6, baselines.accel);
+  const baseGyro = Math.max(1e-6, baselines.gyro);
 
   let smooth = 0;
   const scores = [];
@@ -307,6 +329,12 @@ board.on("ready", async () => {
   try {
     await waitForSensors(() => latestPressure !== null && latestAccel !== null && latestGyro !== null);
     const baseline = await calibrateBaseline(() => latestPressure, options.baselineSamples, options.sampleMs);
+    const motionBaselines = await calibrateMotionBaseline(
+      () => latestAccel,
+      () => latestGyro,
+      options.baselineSamples,
+      options.sampleMs,
+    );
     console.log("\nReady. Press Enter to start recording. (Ctrl+C to exit)");
 
     while (true) {
@@ -360,6 +388,12 @@ board.on("ready", async () => {
           weightAccel: options.activityWeightAccel,
           weightGyro: options.activityWeightGyro,
           smoothFactor: options.activitySmooth,
+          baselines: {
+            pressure: 0, // already baseline-subtracted
+            accel: motionBaselines.accelBaseline,
+            gyro: motionBaselines.gyroBaseline,
+          },
+          collectTerms: options.activityPlot || Boolean(options.activityDebugLog),
         });
         blocks = extractBlocks(frames, scores, {
           high: options.activityHigh,
