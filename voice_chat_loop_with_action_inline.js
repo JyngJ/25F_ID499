@@ -12,8 +12,10 @@ const __dirname = getDirname(import.meta.url);
 const INPUT_AUDIO_PATH = path.join(__dirname, "assets", "input.wav");
 const OUTPUT_AUDIO_PATH = path.join(__dirname, "assets", "reply.mp3");
 const INITIAL_PROMPT = config.initial_prompt;
+const MIN_AUDIO_SECONDS = 0.2; // Whisper는 0.1s 미만 거절. 0.2s 미만이면 다시 듣기로 전환.
 
 const ACTION_MODULE_DIR = path.join(__dirname, "ActionRecognitionModule");
+
 const ACTION_OPTIONS = {
   modelPath: path.join(ACTION_MODULE_DIR, "models", "sequence_classifier_20251201_more.pt"),
   configPath: path.join(ACTION_MODULE_DIR, "models", "sequence_config_20251201_more.json"),
@@ -47,6 +49,24 @@ class ConsoleLedAdapter {
   setState({ brightness }) {
     // Dummy adapter so recorder LED calls do not throw.
     return brightness;
+  }
+}
+
+function getWavDurationSeconds(filePath) {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const header = Buffer.alloc(44);
+    fs.readSync(fd, header, 0, 44, 0);
+    fs.closeSync(fd);
+    const dataSize = header.readUInt32LE(40);
+    const sampleRate = header.readUInt32LE(24);
+    const channels = header.readUInt16LE(22);
+    const bitsPerSample = header.readUInt16LE(34);
+    const bytesPerSample = (bitsPerSample / 8) * channels || 1;
+    if (!sampleRate) return 0;
+    return dataSize / (sampleRate * bytesPerSample);
+  } catch (e) {
+    return 0;
   }
 }
 
@@ -94,9 +114,19 @@ async function handleConversationTurn() {
     throw err;
   }
 
+  const recordedDuration = getWavDurationSeconds(INPUT_AUDIO_PATH);
   const actionPromise = actionRecognizer
     .stopAndGetAction()
     .catch(() => ({ label: "idle", probability: 0, raw: "timeout" }));
+
+  if (recordedDuration < MIN_AUDIO_SECONDS) {
+    console.log(
+      `🕑 녹음 길이 ${(recordedDuration * 1000).toFixed(0)}ms (너무 짧음). 다시 듣기 모드로 전환합니다.`,
+    );
+    await actionPromise; // 센서 프로세스 상태 복구
+    setSensorDisplayActive(false);
+    return;
+  }
 
   console.log("Transcribing...");
   const userText = await createTranscription(INPUT_AUDIO_PATH, "ko");

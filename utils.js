@@ -8,6 +8,7 @@ export const getFilename = (importMetaUrl) => fileURLToPath(importMetaUrl);
 
 
 export function runCommand(cmd) {
+  // console.log("CMD >>", cmd);
   return new Promise((resolve, reject) => {
     exec(cmd, (error, stdout, stderr) => {
       if (error) {
@@ -43,8 +44,8 @@ export async function checkDependency(command, installHint) {
 export function buildRecordCommand(outputFile, silenceEffect, maxRecDuration) {
   const isWindows = process.platform === 'win32';
   const recorder = isWindows ? 'sox' : 'rec';
-  const device = isWindows ? '-t waveaudio -d' : '-d';
-  return `${recorder} -q -c 1 -r 16000 -b 16 ${device} "${outputFile}" ${silenceEffect} trim 0 ${maxRecDuration}`;
+  const device = isWindows ? '-t waveaudio -d' : '';
+  return `${recorder} --buffer 8192 -q -c 1 -r 48000 -b 16 "${outputFile}" rate -v 16000 ${silenceEffect} trim 0 ${maxRecDuration}`;
 }
 
 export function buildPlaybackCommand(filePath) {
