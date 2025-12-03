@@ -27,7 +27,8 @@ import path from 'path';
 import { config } from './config.js';
 
 const client = new OpenAI();
-const systemPrompt = fs.readFileSync(path.resolve('system_prompt.txt'), 'utf-8');
+const systemPromptPath = path.resolve('prompts', 'system_prompt.txt'); // use prompts/ directory
+const systemPrompt = fs.readFileSync(systemPromptPath, 'utf-8');
 
 export async function askPillowMate(messages) {
   const messagesWithSystem = [{ role: 'system', content: systemPrompt }, ...messages];
@@ -45,8 +46,8 @@ export async function askPillowMate(messages) {
     console.error("Raw response:", response.choices[0].message.content);
     return {
       text: "미안해, 답변을 이해할 수 없어. 다시 말해줄래?",
-      action: "none",
-      led_pattern: "말하는 소리의 크기에 따라 점멸"
+      emotion: "neutral",
+      context_label: "chat"
     };
   }
 }

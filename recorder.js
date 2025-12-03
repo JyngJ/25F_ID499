@@ -44,7 +44,7 @@ export function recordAudio(outputFile, options = {}) {
     const endThresholdVolume = options.endThreshold * 100;
 
     // minSilenceDuration is in ms, so convert to seconds for sox
-    const minSilenceDurationSec = options.minSilenceDuration;
+    const minSilenceDurationSec = options.minSilenceDuration / 1000;
     const startThresholdDurationSec = options.startThresholdDuration / 1000;
 
     // Max duration for rec command (in seconds)

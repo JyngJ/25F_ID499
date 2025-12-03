@@ -145,14 +145,14 @@ async function handleConversationTurn() {
 
   const gptResponse = await askPillowMate(conversationHistory);
   const replyText = gptResponse.text;
-  const action = gptResponse.action;
-  const ledPattern = gptResponse.led_pattern;
+  const emotion = gptResponse.emotion ?? "neutral";
+  const contextLabel = gptResponse.context_label ?? "chat";
 
   conversationHistory.push({ role: "assistant", content: replyText });
 
   console.log("PillowMate:", replyText);
-  console.log("Action:", action);
-  console.log("LED Pattern:", ledPattern);
+  console.log("Emotion:", emotion);
+  console.log("Context:", contextLabel);
 
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
   await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
