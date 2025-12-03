@@ -14,13 +14,13 @@ export const config = {
   // SoX VAD (Voice Activity Detection) parameters
   vad: {
     // Recording starts after sound above threshold for start_threshold_duration (milliseconds)
-    start_threshold_duration: "200", // milliseconds
-    start_threshold_volume: "2%",
+    start_threshold_duration: "100", // milliseconds
+    start_threshold_volume: "1%",
     // Recording stops after silence below threshold for end_threshold_duration (milliseconds)
-    end_threshold_duration: "1000", // milliseconds
+    end_threshold_duration: "2000", // milliseconds
     end_threshold_volume: "0.5%",
     // Maximum recording time (milliseconds)
-    max_recording_time: "5000", // milliseconds
+    max_recording_time: "10000", // milliseconds
   },
   ///////////////////////////////////////////////////////////////////
 

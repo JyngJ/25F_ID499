@@ -11,8 +11,7 @@ import { InlineActionRecognizer } from "./ActionRecognitionModule/node/action_re
 const __dirname = getDirname(import.meta.url);
 const INPUT_AUDIO_PATH = path.join(__dirname, "assets", "input.wav");
 const OUTPUT_AUDIO_PATH = path.join(__dirname, "assets", "reply.mp3");
-const INITIAL_PROMPT = config.initial_prompt;
-const MIN_AUDIO_SECONDS = 0.2; // Whisper는 0.1s 미만 거절. 0.2s 미만이면 다시 듣기로 전환.
+const MIN_AUDIO_SECONDS = 1; // Whisper는 0.1s 미만 거절. 0.2s 미만이면 다시 듣기로 전환.
 
 const ACTION_MODULE_DIR = path.join(__dirname, "ActionRecognitionModule");
 
@@ -90,6 +89,28 @@ function createActionRecognizer() {
 async function resetActionRecognizer() {
   createActionRecognizer();
   await actionRecognizer.ensureReady();
+}
+
+async function playStartMessage() {
+  // Seed the model to produce a start-context greeting instead of a fixed prompt.
+  const seedUser = {
+    role: "user",
+    content: "Session start. voice_text: (none yet). action_label: idle. Please begin.",
+  };
+  const startResponse = await askPillowMate([seedUser]);
+  const replyText = startResponse.text;
+  const emotion = startResponse.emotion ?? "neutral";
+  const contextLabel = startResponse.context_label ?? "start";
+
+  conversationHistory.push(seedUser);
+  conversationHistory.push({ role: "assistant", content: replyText });
+
+  console.log("PillowMate (start):", replyText);
+  console.log("Emotion:", emotion);
+  console.log("Context:", contextLabel);
+
+  await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
+  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
 }
 
 async function handleConversationTurn() {
@@ -171,15 +192,7 @@ async function mainLoop() {
   setSensorDisplayActive(false);
   await actionRecognizer.ensureReady();
 
-  try {
-    await textToSpeech(INITIAL_PROMPT, OUTPUT_AUDIO_PATH);
-  } catch (e) {
-    console.log("TTS Skip:", e.message);
-  }
-
-  conversationHistory.push({ role: "assistant", content: INITIAL_PROMPT });
-  console.log("PillowMate:", INITIAL_PROMPT);
-  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  await playStartMessage();
 
   while (true) {
     console.log("\n----- Start a new turn -----");

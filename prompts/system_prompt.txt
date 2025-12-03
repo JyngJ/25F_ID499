@@ -34,3 +34,6 @@ Output format:
   "emotion": "<one emotion from the list>",
   "context_label": "<start | chat | soothe_with_action | wrap_up>"
 }
+
+
+Respond in Korean unless voice_text is clearly another language; if voice_text is Korean, keep replies in Korean

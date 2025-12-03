@@ -26,26 +26,51 @@ import fs from 'fs';
 import path from 'path';
 import { config } from './config.js';
 
-const client = new OpenAI();
+const apiKey =
+  process.env.OPENAI_API_KEY ||
+  process.env.OPENAIKEY ||
+  process.env.OPENAPIKEY ||
+  process.env.openapikey;
+
+if (!apiKey) {
+  throw new Error("OpenAI API key not found. Set OPENAI_API_KEY in your environment or .env file.");
+}
+
+const client = new OpenAI({ apiKey });
 const systemPromptPath = path.resolve('prompts', 'system_prompt.txt'); // use prompts/ directory
 const systemPrompt = fs.readFileSync(systemPromptPath, 'utf-8');
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+}
 
 export async function askPillowMate(messages) {
   const messagesWithSystem = [{ role: 'system', content: systemPrompt }, ...messages];
 
-  const response = await client.chat.completions.create({
-    model: config.openai.gpt.model,
-    messages: messagesWithSystem,
-    response_format: { type: "json_object" }, // Ensure JSON output
-  });
-
   try {
+    const response = await withTimeout(
+      client.chat.completions.create({
+        model: config.openai.gpt.model,
+        messages: messagesWithSystem,
+        response_format: { type: "json_object" }, // Ensure JSON output
+      }),
+      5000,
+      'askPillowMate'
+    );
+
     return JSON.parse(response.choices[0].message.content);
   } catch (error) {
     console.error("Failed to parse JSON response from GPT:", error);
-    console.error("Raw response:", response.choices[0].message.content);
+    if (error.response?.choices?.[0]?.message?.content) {
+      console.error("Raw response:", error.response.choices[0].message.content);
+    }
     return {
-      text: "미안해, 답변을 이해할 수 없어. 다시 말해줄래?",
+      text: "미안해, 응답이 늦거나 잘 이해하지 못했어. 다시 한 번 말해줄래?",
       emotion: "neutral",
       context_label: "chat"
     };
