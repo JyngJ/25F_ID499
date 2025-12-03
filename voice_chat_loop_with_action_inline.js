@@ -6,7 +6,7 @@ import { recordAudio, registerLedAdapter } from "./recorder.js";
 import { updateSensorDisplay, attachStatusDisplay } from "./status_display.js";
 import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from "./utils.js";
 import { config } from "./config.js";
-import { InlineActionRecognizer } from "./action_recognizer_inline.js";
+import { InlineActionRecognizer } from "./ActionRecognitionModule/node/action_recognizer_inline.js";
 
 const __dirname = getDirname(import.meta.url);
 const INPUT_AUDIO_PATH = path.join(__dirname, "assets", "input.wav");

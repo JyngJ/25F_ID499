@@ -1,42 +1,12 @@
 import fs from "fs";
-import mic from "mic";
-import WaveFilePackage from "wavefile";
-import { updateMicDisplay, attachStatusDisplay } from "./status_display.js";
-const { WaveFile } = WaveFilePackage;
+import { buildRecordCommand, runCommand } from "./utils.js"; // Import helpers
+/**
+ * Records audio using the 'rec' command (from SoX) with VAD based on options.
+ * @param {string} outputFile - Path to save the WAV file.
+ * @param {object} options - Recording options. Expected to contain maxDuration, startThreshold, endThreshold, minSilenceDuration.
+ * @returns {Promise<void>}
+ */
 
-const SAMPLE_RATE = 16000;
-const CHANNELS = 1;
-const BIT_DEPTH = 16;
-const BYTES_PER_SAMPLE = (BIT_DEPTH / 8) * CHANNELS;
-
-function computeRms(buffer) {
-  if (!buffer || buffer.length === 0) {
-    return 0;
-  }
-  let sumSquares = 0;
-  const sampleCount = buffer.length / BYTES_PER_SAMPLE;
-  for (let i = 0; i < buffer.length; i += 2) {
-    const sample = buffer.readInt16LE(i);
-    sumSquares += sample * sample;
-  }
-  const rms = Math.sqrt(sumSquares / sampleCount);
-  return rms / 32768;
-}
-
-function renderLevel(level, { active = true } = {}) {
-  if (!active) {
-    updateMicDisplay("🎧 음성 입력 대기 중...");
-    return;
-  }
-  const clamped = Math.max(0, Math.min(1, level));
-  const barLength = 30;
-  const filled = Math.round(clamped * barLength);
-  updateLedForLevel(clamped);
-  const micLine = `🎙 Input [${"█".repeat(filled).padEnd(barLength, " ")}] ${(
-    clamped * 100
-  ).toFixed(0)}%`;
-  updateMicDisplay(micLine);
-}
 
 let ledAdapter = null;
 let lastLedLevel = 0;
@@ -67,134 +37,43 @@ function updateLedForLevel(level) {
 }
 
 export function recordAudio(outputFile, options = {}) {
-  return new Promise((resolve, reject) => {
-    attachStatusDisplay();
-    const startThreshold = options.startThreshold ?? 0.02;
-    const endThreshold = options.endThreshold ?? 0.015;
-    const startThresholdDurationMs = options.startThresholdDuration ?? 300;
-    const minSilenceDurationMs = options.minSilenceDuration ?? 800;
-    const maxDuration = options.maxDuration ?? 10000;
+  return new Promise(async (resolve, reject) => {
+    // VAD parameters from options (derived from config.js in voice_chat.js/loop)
+    // Thresholds are floats like 0.01, so convert to % for sox
+    const startThresholdVolume = options.startThreshold * 100;
+    const endThresholdVolume = options.endThreshold * 100;
+
+    // minSilenceDuration is in ms, so convert to seconds for sox
+    const minSilenceDurationSec = options.minSilenceDuration;
+    const startThresholdDurationSec = options.startThresholdDuration / 1000;
+
+    // Max duration for rec command (in seconds)
+    // options.maxDuration is in ms, convert to seconds. Ensure minimum 1s.
+    const maxRecDuration = options.maxDuration
+      ? Math.max(1, options.maxDuration / 1000)
+      : 10; // Default to 10s if not set
+
+    // SoX silence effect:
+    // silence 1 <duration> <threshold[d|%]> 1 <duration> <threshold[d|%]>
+    // '1' before durations are count parameters.
+    const soxSilenceEffect = `silence 1 ${startThresholdDurationSec} ${startThresholdVolume}% 1 ${minSilenceDurationSec} ${endThresholdVolume}%`;
+
+    // console.log(
+    //   `\n🎙  녹음 시작 (최대 ${maxRecDuration}초, VAD 활성화 - 시작: ${startThresholdVolume}% ${startThresholdDurationSec}s / 종료: ${endThresholdVolume}% ${minSilenceDurationSec}s)...`
+    // );
 
     console.log(
-      "\n🎙  Threshold를 넘는 음성이 입력되면 자동으로 녹음이 시작되고, 침묵이 일정 시간 유지되면 종료됩니다.",
+      `\n🎙  Threshold를 넘는 음성이 입력되면 자동으로 녹음 시작, 약 1초간 침묵이 유지되면 녹음이 중단됩니다. (최대 녹음시간: ${maxRecDuration}초)`
     );
-
-    const micInstance = mic({
-      rate: String(SAMPLE_RATE),
-      channels: String(CHANNELS),
-      bitwidth: String(BIT_DEPTH),
-      encoding: "signed-integer",
-      endian: "little",
-      device: options.device,
-      fileType: "raw",
-    });
-
-    const micInputStream = micInstance.getAudioStream();
-
-    const buffers = [];
-    let recordingStarted = false;
-    let aboveStartSec = 0;
-    let belowEndSec = 0;
-    let recordedMs = 0;
-    let finished = false;
-    let levelTimer = null;
-    let visualizeLevel = false;
-    const onSpeechStart = options.onSpeechStart;
-
-    const stopRecording = (reason) => {
-      if (finished) return;
-      finished = true;
-      micInstance.stop();
-      if (levelTimer) {
-        clearInterval(levelTimer);
-        levelTimer = null;
-      }
-      process.stdout.write("\n");
-
-      if (buffers.length === 0) {
-        reject(new Error("음성 구간을 감지하지 못했습니다."));
-        return;
-      }
-
-      const pcmBuffer = Buffer.concat(buffers);
-      const wav = new WaveFile();
-      wav.fromScratch(CHANNELS, SAMPLE_RATE, "16", pcmBuffer);
-      fs.writeFile(outputFile, Buffer.from(wav.toBuffer()), (err) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-        console.log(`✅ 녹음 완료: ${outputFile} (${reason})`);
-        resolve();
-      });
-    };
-
-    micInputStream.on("data", (chunk) => {
-      const rms = computeRms(chunk);
-      renderLevel(rms, { active: visualizeLevel });
-
-      const chunkMs = (chunk.length / BYTES_PER_SAMPLE / SAMPLE_RATE) * 1000;
-      const chunkSec = chunkMs / 1000;
-
-      if (!recordingStarted) {
-        if (rms >= startThreshold) {
-          aboveStartSec += chunkSec;
-          if (aboveStartSec >= startThresholdDurationMs / 1000) {
-            recordingStarted = true;
-            visualizeLevel = true;
-            belowEndSec = 0;
-            console.log("\n▶️  음성 감지됨. 녹음을 시작합니다.");
-            if (typeof onSpeechStart === "function") {
-              onSpeechStart();
-            }
-          }
-        } else {
-          aboveStartSec = 0;
-        }
-      }
-
-      if (recordingStarted) {
-        buffers.push(Buffer.from(chunk));
-        recordedMs += chunkMs;
-
-        if (rms <= endThreshold) {
-          belowEndSec += chunkSec;
-          if (belowEndSec >= minSilenceDurationMs / 1000) {
-            stopRecording("침묵 감지");
-          }
-        } else {
-          belowEndSec = 0;
-        }
-
-        if (recordedMs >= maxDuration) {
-          stopRecording("최대 녹음 시간 도달");
-        }
-      }
-    });
-
-    micInputStream.on("error", (err) => {
-      if (finished) return;
-      finished = true;
-      micInstance.stop();
+    try {
+      const recordCmd = buildRecordCommand(outputFile, soxSilenceEffect, maxRecDuration);
+      // Platform-aware record command: SoX on Windows, rec elsewhere. Both share VAD options.
+      await runCommand(recordCmd);
+      console.log("✅ 녹음 완료:", outputFile);
+      resolve();
+    } catch (err) {
+      console.error("❌ 녹음 중 오류:", err);
       reject(err);
-    });
-
-    micInputStream.on("startComplete", () => {
-      levelTimer = setInterval(() => {}, 200);
-    });
-
-    micInputStream.on("stopComplete", () => {
-      if (!finished) {
-        stopRecording("중단됨");
-      }
-    });
-
-    micInstance.start();
-
-    setTimeout(() => {
-      if (!finished) {
-        stopRecording("녹음 타임아웃");
-      }
-    }, maxDuration + 2000);
+    }
   });
 }
