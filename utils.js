@@ -42,15 +42,15 @@ export async function checkDependency(command, installHint) {
 // -----------------------------
 
 export function buildRecordCommand(outputFile, silenceEffect, maxRecDuration) {
-  const isWindows = process.platform === 'win32';
-  const recorder = isWindows ? 'sox' : 'rec';
-  const device = isWindows ? '-t waveaudio -d' : '';
-  return `${recorder} --buffer 8192 -q -c 1 -r 48000 -b 16 "${outputFile}" rate -v 16000 ${silenceEffect} trim 0 ${maxRecDuration}`;
+  if (process.platform === 'win32') {
+    return `sox --buffer 8192 -q -c 1 -r 48000 -b 16 -t waveaudio -d "${outputFile}" rate -v 16000 ${silenceEffect} trim 0 ${maxRecDuration}`;
+  }
+  return `rec --buffer 8192 -q -c 1 -r 48000 -b 16 "${outputFile}" rate -v 16000 ${silenceEffect} trim 0 ${maxRecDuration}`;
 }
 
 export function buildPlaybackCommand(filePath) {
   if (process.platform === 'win32') {
-    return `sox "${filePath}" -t waveaudio`;
+    return `sox --buffer 1024 "${filePath}" -t waveaudio`;
   }
   return `afplay "${filePath}"`;
 }
