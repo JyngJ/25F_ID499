@@ -33,11 +33,11 @@ models/
 ```bash
 cd ActionRecognitionModule
 node node/collect_sequences.js \
-  --labels idle shake tap \
-  --trials 3 \
+  --labels hug shake rest_head tap \
+  --trials 5 \
   --sample-ms 20 \
   --record-seconds 30 \
-  --output data/raw/shake_tap_2025_12_01
+  --output data/raw/251209pillowmate_full
 ```
 
 - `Enter`로 녹화를 시작하면 지정된 시간(`--record-seconds`, 기본 30초) 동안 자동으로 기록하고 종료합니다. 0을 주면 이전처럼 수동 종료 모드가 됩니다.
@@ -69,17 +69,15 @@ node node/collect_sequences.js \
 ```bash
 cd ActionRecognitionModule/python
 python augment_sequences.py \
-  --data-dir ../data/raw/shake_tap_2025_12_01 ../data/raw/old \
+  --data-dir ../data/raw/251209pillowmate_full_many \
   --output-dir ../data/augmented \
   --ops random_crop time_scale time_shift amplitude_scale \
-  --copies 7 \
+  --copies 15 \
   --include-original \
   --split-by-session \
-  --time-shift-ratio 0.1 \
-  --amplitude-scale-min 0.9 \
-  --amplitude-scale-max 1.1 \
-  --time-mask-ratio 0.15 \
-  --time-mask-chunks 2
+  --time-shift-ratio 0.2 \
+  --amplitude-scale-min 0.8 \
+  --amplitude-scale-max 1.2 \
 ```
 
 - `--ops`: 적용할 증강 목록. 각 기법의 의미/세부 옵션:
@@ -104,18 +102,18 @@ python augment_sequences.py \
 ```bash
 cd ActionRecognitionModule/python
 python train_sequence_model.py \
-  --data-dir ../data/augmented/old ../data/augmented/shake_tap_2025_12_01 \
-  --model-out ../models/sequence_classifier_20251201_more.pt \
-  --config-out ../models/sequence_config_20251201_more.json \
-  --epochs 60 \
-  --val-split 0.35 \
+  --data-dir ../data/augmented/251209pillowmate_full_many \
+  --model-out ../models/251209pillowmate_full_many.pt \
+  --config-out ../models/251209pillowmate_full_many.json \
+  --epochs 100 \
+  --val-split 0.30 \
   --batch-size 32 \
   --hidden-dim 128 \
   --low-pass-window 5 \
   --stop-when-val-acc 0.99 \
   --stop-patience 4 \
   --log-misclassifications \
-  --device mps \
+  --device cpu \
   --exclude-labels idle
 ```
 

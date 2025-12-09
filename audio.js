@@ -37,6 +37,9 @@ function withTimeout(promise, ms, label) {
 
 // Helpers
 export async function textToSpeech(text, outputFile) {
+  if (typeof text !== "string" || text.trim().length === 0) {
+    throw new Error("textToSpeech: input text is empty or invalid");
+  }
   const response = await withTimeout(
     openai.audio.speech.create({
       model: config.openai.tts.model,

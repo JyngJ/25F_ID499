@@ -36,15 +36,17 @@ if (!apiKey) {
   throw new Error("OpenAI API key not found. Set OPENAI_API_KEY in your environment or .env file.");
 }
 
-const COMPLETION_TIMEOUT_MS = Number(process.env.OPENAI_COMPLETION_TIMEOUT_MS || 10000);
+const COMPLETION_TIMEOUT_MS = Number(process.env.OPENAI_COMPLETION_TIMEOUT_MS || 20000);
 const COMPLETION_RETRIES = Number(process.env.OPENAI_COMPLETION_RETRIES || 2);
 
 const client = new OpenAI({
   apiKey,
   timeout: COMPLETION_TIMEOUT_MS, // request-level timeout inside the SDK
 });
+export const gptModel = process.env.OPENAI_GPT_MODEL || config.openai.gpt.model;
 const systemPromptPath = path.resolve('prompts', 'system_prompt.txt'); // use prompts/ directory
 const systemPrompt = fs.readFileSync(systemPromptPath, 'utf-8');
+let printedConfig = false;
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
@@ -75,19 +77,46 @@ function logOpenAIError(error, label) {
 }
 
 export async function askPillowMate(messages) {
-  const messagesWithSystem = [{ role: 'system', content: systemPrompt }, ...messages];
+  const jsonGuard = {
+    role: 'system',
+    content: 'You are a JSON API. Always and only reply with a valid JSON object. (json)',
+  };
+  const messagesWithSystem = [jsonGuard, { role: 'system', content: systemPrompt }, ...messages];
+  if (!printedConfig) {
+    console.log(
+      `[askPillowMate] model=${gptModel}, timeout=${COMPLETION_TIMEOUT_MS}ms, retries=${COMPLETION_RETRIES}`
+    );
+    printedConfig = true;
+  }
+
+  const totalChars = messagesWithSystem.reduce(
+    (sum, m) => sum + String(m.content ?? '').length,
+    0
+  );
+  const lastUser = [...messagesWithSystem]
+    .reverse()
+    .find((m) => m.role === 'user')?.content;
+  const lastUserPreview = lastUser
+    ? lastUser.replace(/\s+/g, ' ').slice(0, 160)
+    : '';
 
   for (let attempt = 1; attempt <= COMPLETION_RETRIES + 1; attempt++) {
     try {
+      const started = Date.now();
+      console.log(
+        `[askPillowMate attempt ${attempt}] sending (messages=${messagesWithSystem.length}, totalChars=${totalChars}, lastUser="${lastUserPreview}")`
+      );
       const response = await withTimeout(
         client.chat.completions.create({
-          model: config.openai.gpt.model,
+          model: gptModel,
           messages: messagesWithSystem,
           response_format: { type: "json_object" }, // Ensure JSON output
         }),
         COMPLETION_TIMEOUT_MS,
         'askPillowMate'
       );
+      const elapsed = Date.now() - started;
+      console.log(`[askPillowMate attempt ${attempt}] success in ${elapsed}ms`);
       return JSON.parse(response.choices[0].message.content);
     } catch (error) {
       const isLast = attempt === COMPLETION_RETRIES + 1;
