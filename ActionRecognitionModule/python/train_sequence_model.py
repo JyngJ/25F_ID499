@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -27,6 +28,37 @@ import torch
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+
+# Optional: load .env for WANDB_API_KEY 등 환경변수
+def _load_env_files():
+    root_env = Path(__file__).resolve().parents[2] / ".env"
+    local_env = Path(__file__).resolve().parents[1] / ".env"
+    tried = []
+    try:
+        from dotenv import load_dotenv
+        for env_path in (root_env, local_env):
+            if env_path.exists():
+                load_dotenv(env_path)
+                tried.append(str(env_path))
+    except ImportError:
+        # fallback: simple parser
+        for env_path in (root_env, local_env):
+            if not env_path.exists():
+                continue
+            tried.append(str(env_path))
+            with env_path.open() as fp:
+                for line in fp:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key and val and key not in os.environ:
+                        os.environ[key] = val
+    return tried
+
+_ = _load_env_files()
 
 from sequence_model import SequenceGRU
 
@@ -363,6 +395,9 @@ def main() -> None:
             import wandb
         except ImportError:
             raise SystemExit("wandb가 설치되어 있지 않습니다. pip install wandb 후 다시 실행하세요.")
+        api_key = os.environ.get("WANDB_API_KEY")
+        if not api_key:
+            raise SystemExit("WANDB_API_KEY가 설정되어 있지 않습니다. 루트 .env에 키를 넣거나 환경변수로 설정하세요.")
         wandb_args = {
             "project": args.wandb_project,
             "entity": args.wandb_entity,

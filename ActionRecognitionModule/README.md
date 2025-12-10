@@ -117,9 +117,9 @@ python augment_sequences.py \
 ```bash
 cd ActionRecognitionModule/python
 python train_sequence_model.py \
-  --data-dir ../data/augmented/251209pillowmate_full_many \
-  --model-out ../models/251209pillowmate_full_many.pt \
-  --config-out ../models/251209pillowmate_full_many.json \
+  --data-dir ../data/augmented/251210pillowmate_full \
+  --model-out ../models/251210pillowmate_full.pt \
+  --config-out ../models/251210pillowmate_full.json \
   --epochs 100 \
   --val-split 0.30 \
   --batch-size 32 \
@@ -129,7 +129,10 @@ python train_sequence_model.py \
   --stop-patience 4 \
   --log-misclassifications \
   --device cpu \
-  --exclude-labels idle
+  --exclude-labels idle \
+  --wandb \
+  --wandb-project pillowmate-gru \
+  --wandb-run-name 251210pillowmate_full
 ```
 
 - `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
@@ -143,6 +146,7 @@ python train_sequence_model.py \
   - `--stop-when-val-acc`: 검증 정확도가 특정 값(0~1)에 도달하면 조기 종료합니다. 검증 세트가 있어야 작동합니다.
   - `--stop-patience`: 위 정확도 조건을 연속 몇 번 만족해야 멈출지(기본 1회). 예: `--stop-when-val-acc 0.98 --stop-patience 3`.
   - `--log-misclassifications`: 각 epoch의 검증 단계에서 어떤 라벨이 어떤 라벨로 잘못 분류됐는지 요약을 출력합니다.
+  - `--wandb` 관련 옵션: `WANDB_API_KEY`가 환경변수로 설정되어 있어야 합니다(예: `.env`에 저장하거나 `wandb login`).
   - 학습 중 검증 정확도가 갱신될 때마다 즉시 체크포인트를 저장하며, 동일 정확도일 경우 최신 상태로 덮어씁니다.
 - 출력물
   - `sequence_classifier.pt`: PyTorch state dict
