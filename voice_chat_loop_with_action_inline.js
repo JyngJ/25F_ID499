@@ -16,9 +16,10 @@ const MIN_AUDIO_SECONDS = 1; // Whisper는 0.1s 미만 거절. 0.2s 미만이면
 
 const ACTION_MODULE_DIR = path.join(__dirname, "ActionRecognitionModule");
 
+const ACTION_MODEL_BASENAME = "251209pillowmate_full";
 const ACTION_OPTIONS = {
-  modelPath: path.join(ACTION_MODULE_DIR, "models", "sequence_classifier_20251201_more.pt"),
-  configPath: path.join(ACTION_MODULE_DIR, "models", "sequence_config_20251201_more.json"),
+  modelPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}_many.pt`),
+  configPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}.json`),
   lowPassWindow: 5,
   autoIdle: {
     enabled: true,

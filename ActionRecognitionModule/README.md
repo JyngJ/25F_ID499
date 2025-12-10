@@ -141,8 +141,8 @@ python train_sequence_model.py \
 ```bash
 cd ActionRecognitionModule
 node node/run_sequence_inference.js \
-  --model models/sequence_classifier_20251201_more.pt \
-  --config models/sequence_config_20251201_more.json \
+  --model models/251209pillowmate_full.pt \
+  --config models/251209pillowmate_full.json \
   --low-pass-window 5 \
   --auto-idle \
   --idle-label idle \
