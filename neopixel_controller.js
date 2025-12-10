@@ -1,4 +1,3 @@
-import five from "johnny-five";
 import pixel from "node-pixel";
 
 const DEFAULT_PIN = Number(process.env.NEOPIXEL_PIN || 6);
@@ -288,6 +287,10 @@ class NeoPixelController {
   async showEmotion(emotion) {
     const config = EMOTION_PATTERN_MAP[emotion] ?? EMOTION_PATTERN_MAP.neutral;
     const { color, pattern, interval } = config;
+
+    console.log(
+      `NeoPixel showEmotion: emotion=${emotion}, color=${color}, pattern=${pattern}, interval=${interval ?? "n/a"}`,
+    );
 
     switch (pattern) {
       case "blink":
