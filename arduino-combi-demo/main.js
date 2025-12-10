@@ -2,7 +2,11 @@ const five = require("johnny-five");
 const pixel = require("node-pixel");
 const keypress = require("keypress");
 
-const MY_PORT = "/dev/tty.usbmodem1301"; 
+const MY_PORT = process.env.SERIAL_PORT ||
+  process.env.NEOPIXEL_PORT ||
+  process.env.ARDUINO_PORT ||
+  process.env.BOARD_PORT ||
+  null;
 
 const board = new five.Board({
   port: MY_PORT,
@@ -71,7 +75,7 @@ board.on("ready", function() {
   const strip = new pixel.Strip({
     board: this,
     controller: "FIRMATA",
-    strips: [ {color_order: pixel.COLOR_ORDER.GRB, pin: 6, length: 8} ],
+    strips: [ {color_order: pixel.COLOR_ORDER.GRB, pin: 6, length: 44} ],
     skip_firmware_check: true
   });
 

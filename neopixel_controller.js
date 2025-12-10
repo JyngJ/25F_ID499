@@ -2,12 +2,13 @@ import five from "johnny-five";
 import pixel from "node-pixel";
 
 const DEFAULT_PORT =
+  process.env.SERIAL_PORT ||
   process.env.NEOPIXEL_PORT ||
   process.env.ARDUINO_PORT ||
   process.env.BOARD_PORT ||
   null;
 const DEFAULT_PIN = Number(process.env.NEOPIXEL_PIN || 6);
-const DEFAULT_LENGTH = Number(process.env.NEOPIXEL_LENGTH || 8);
+const DEFAULT_LENGTH = 44;
 
 // Define patterns mapping: color + pattern type + optional interval
 export const EMOTION_PATTERN_MAP = {
@@ -48,11 +49,64 @@ class NeoPixelController {
     this.currentPatternInterval = null;
   }
 
+  setBoard(board) {
+    this.options.board = board;
+    // Reset ready promise so ensureReady will re-init with the shared board.
+    this.readyPromise = null;
+    this.failed = false;
+    this.strip = null;
+  }
+
   async ensureReady() {
     if (this.failed) return false;
     if (this.readyPromise) return this.readyPromise;
 
+    const initStrip = (board, resolve) => {
+      this.strip = new pixel.Strip({
+        board,
+        controller: "FIRMATA",
+        strips: [
+          {
+            color_order: this.options.colorOrder,
+            pin: this.options.pin,
+            length: this.options.length,
+          },
+        ],
+        skip_firmware_check: true,
+      });
+
+      this.strip.on("ready", () => {
+        this.strip.off();
+        this.strip.show();
+        this.currentColor = "off";
+        resolve(true);
+      });
+
+      this.strip.on("error", (err) => {
+        console.error("NeoPixel strip error:", err?.message ?? err);
+        this.failed = true;
+        resolve(false);
+      });
+    };
+
     this.readyPromise = new Promise((resolve) => {
+      const externalBoard = this.options.board;
+      if (externalBoard) {
+        this.board = externalBoard;
+        const onReady = () => initStrip(externalBoard, resolve);
+        if (externalBoard.isReady) {
+          onReady();
+        } else {
+          externalBoard.once("ready", onReady);
+          externalBoard.once("error", (err) => {
+            console.error("Board Error:", err?.message ?? err);
+            this.failed = true;
+            resolve(false);
+          });
+        }
+        return;
+      }
+
       this.board = new five.Board({
         port: this.options.port || undefined,
         repl: false,
@@ -60,33 +114,7 @@ class NeoPixelController {
         timeout: 30000,
       });
 
-      this.board.on("ready", () => {
-        this.strip = new pixel.Strip({
-          board: this.board,
-          controller: "FIRMATA",
-          strips: [
-            {
-              color_order: this.options.colorOrder,
-              pin: this.options.pin,
-              length: this.options.length,
-            },
-          ],
-          skip_firmware_check: true,
-        });
-
-        this.strip.on("ready", () => {
-          this.strip.off();
-          this.strip.show();
-          this.currentColor = "off";
-          resolve(true);
-        });
-
-        this.strip.on("error", (err) => {
-          console.error("NeoPixel strip error:", err?.message ?? err);
-          this.failed = true;
-          resolve(false);
-        });
-      });
+      this.board.on("ready", () => initStrip(this.board, resolve));
 
       this.board.on("error", (err) => {
         console.error("Board Error:", err?.message ?? err);
