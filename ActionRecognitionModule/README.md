@@ -37,7 +37,7 @@ node node/collect_sequences.js \
   --trials 5 \
   --sample-ms 20 \
   --record-seconds 30 \
-  --output data/raw/251209pillowmate_full
+  --output data/raw/251210pillowmate_pfix
 ```
 
 - `Enter`로 녹화를 시작하면 지정된 시간(`--record-seconds`, 기본 30초) 동안 자동으로 기록하고 종료합니다. 0을 주면 이전처럼 수동 종료 모드가 됩니다.
@@ -62,6 +62,21 @@ node node/collect_sequences.js \
   }
   ```
 
+## 1.5 압력 드롭 전처리 (선택)
+
+- 일부 샘플에서 압력 채널이 접촉 불량으로 -800 이하로 튀는 경우가 있으면 삭제한 버전을 따로 저장합니다.
+- 스크립트: `ActionRecognitionModule/scripts/preprocess_pressure_drop.js`
+
+```bash
+cd ActionRecognitionModule/scripts
+node preprocess_pressure_drop.js \
+  --input ../data/raw/251209pillowmate_full \
+  --output ../data/preprocessed/251209pillowmate_full \
+  --threshold -800
+```
+
+- `pressure_delta < threshold` 프레임을 제거하고 `frame_count`를 갱신한 JSON을 `preprocessed` 경로에 저장합니다. 디렉터리/임계값은 필요에 맞게 바꾸세요.
+
 ## 2. 데이터 증강 (선택)
 
 고정 길이로 수집된 시퀀스를 다양한 길이/강도로 변형해 모델 일반화를 높입니다.
@@ -72,7 +87,7 @@ python augment_sequences.py \
   --data-dir ../data/raw/251209pillowmate_full_many \
   --output-dir ../data/augmented \
   --ops random_crop time_scale time_shift amplitude_scale \
-  --copies 15 \
+  --copies 10 \
   --include-original \
   --split-by-session \
   --time-shift-ratio 0.2 \

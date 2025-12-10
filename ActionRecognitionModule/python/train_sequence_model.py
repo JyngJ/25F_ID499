@@ -92,6 +92,29 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print misclassified label pairs on each validation pass.",
     )
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="If set, log metrics to Weights & Biases (wandb).",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        type=str,
+        default=None,
+        help="wandb 프로젝트 이름 (미설정 시 기본 프로젝트 이름).",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        type=str,
+        default=None,
+        help="wandb entity/organization 이름.",
+    )
+    parser.add_argument(
+        "--wandb-run-name",
+        type=str,
+        default=None,
+        help="wandb run 이름 (미설정 시 자동 생성).",
+    )
     return parser.parse_args()
 
 
@@ -200,6 +223,7 @@ def train_loop(
     label_names: List[str],
     log_misclassified: bool,
     checkpoint_callback=None,
+    wandb_run=None,
 ) -> Dict[str, List[float]]:
     history = {"train_loss": [], "val_loss": [], "val_acc": []}
     best_acc = None
@@ -240,6 +264,15 @@ def train_loop(
                 for true_label, preds in val_metrics["misclassified"].items():
                     details = ", ".join(f"{pred}->{count}" for pred, count in preds.items())
                     print(f"    {true_label}: {details}")
+            if wandb_run is not None:
+                wandb_run.log(
+                    {
+                        "epoch": epoch,
+                        "train_loss": epoch_loss,
+                        "val_loss": val_metrics["loss"],
+                        "val_acc": val_metrics["accuracy"],
+                    }
+                )
             if checkpoint_callback is not None and (
                 best_acc is None or val_metrics["accuracy"] >= best_acc
             ):
@@ -257,6 +290,8 @@ def train_loop(
                 patience_counter = 0
         else:
             print(f"[Epoch {epoch:02d}] train_loss={epoch_loss:.4f} (validation skipped)")
+            if wandb_run is not None:
+                wandb_run.log({"epoch": epoch, "train_loss": epoch_loss})
     return history
 
 
@@ -322,6 +357,22 @@ def save_config(
 
 def main() -> None:
     args = parse_args()
+    wandb_run = None
+    if args.wandb:
+        try:
+            import wandb
+        except ImportError:
+            raise SystemExit("wandb가 설치되어 있지 않습니다. pip install wandb 후 다시 실행하세요.")
+        wandb_args = {
+            "project": args.wandb_project,
+            "entity": args.wandb_entity,
+            "name": args.wandb_run_name,
+            "config": vars(args),
+        }
+        # Remove None values so wandb uses defaults
+        wandb_args = {k: v for k, v in wandb_args.items() if v is not None}
+        wandb_run = wandb.init(**wandb_args)
+
     records = load_sequences(args.data_dirs, args.low_pass_window)
     if args.exclude_labels:
         before = len(records)
@@ -433,6 +484,7 @@ def main() -> None:
         labels,
         args.log_misclassifications,
         checkpoint_callback,
+        wandb_run,
     )
 
     if best_state is not None:
@@ -445,6 +497,8 @@ def main() -> None:
     torch.save(model.state_dict(), args.model_out)
     print(f"Saved model weights to {args.model_out}")
     save_config(args.config_out, labels, mean, std, model_params=model_kwargs)
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
