@@ -54,7 +54,7 @@ void initialise_pixels(uint16_t num_pixels) {
     }
 
     if (num_pixels > 0) {
-        if (px = (uint8_t *)malloc(num_pixels*color_depth)) {
+        if ((px = (uint8_t *)malloc(num_pixels*color_depth))) {
             memset(px, 0, num_pixels*color_depth);
             px_count = num_pixels;
         } else {
@@ -105,7 +105,7 @@ void shift_pixels(uint8_t amt, bool shift_forwards, bool wrap) {
     if (wrap) {
         // need to allocate and then copy the memory from end of the array
         // into temporary array before we move it.
-        if (tmp_px = (uint8_t *)malloc(copy_byte_length)) {
+        if ((tmp_px = (uint8_t *)malloc(copy_byte_length))) {
             memset(tmp_px, 0, copy_byte_length);
         }
 
