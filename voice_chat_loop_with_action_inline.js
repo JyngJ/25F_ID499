@@ -7,6 +7,8 @@ import { updateSensorDisplay, attachStatusDisplay } from "./status_display.js";
 import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from "./utils.js";
 import { config } from "./config.js";
 import { InlineActionRecognizer } from "./ActionRecognitionModule/node/action_recognizer_inline.js";
+import { neoPixel } from "./neopixel_controller.js";
+import five from "johnny-five";
 
 const __dirname = getDirname(import.meta.url);
 const INPUT_AUDIO_PATH = path.join(__dirname, "assets", "input.wav");
@@ -14,6 +16,27 @@ const OUTPUT_AUDIO_PATH = path.join(__dirname, "assets", "reply.mp3");
 const MIN_AUDIO_SECONDS = 1; // Whisper는 0.1s 미만 거절. 0.2s 미만이면 다시 듣기로 전환.
 
 const ACTION_MODULE_DIR = path.join(__dirname, "ActionRecognitionModule");
+
+// Single shared Johnny-Five board for both sensors and NeoPixel.
+const sharedBoardPort =
+  process.env.SERIAL_PORT?.trim() ||
+  process.env.NEOPIXEL_PORT?.trim() ||
+  process.env.BOARD_PORT?.trim() ||
+  undefined;
+const sharedBoard = new five.Board({
+  port: sharedBoardPort,
+  repl: false,
+  debug: false,
+  timeout: 30000,
+});
+const sharedBoardReady = new Promise((resolve, reject) => {
+  sharedBoard.on("ready", () => resolve(sharedBoard));
+  sharedBoard.on("error", (err) => {
+    console.error("Shared board init failed", err);
+    reject(err);
+  });
+});
+neoPixel.setBoard(sharedBoard);
 
 const ACTION_MODEL_BASENAME = "251209pillowmate_full";
 const ACTION_OPTIONS = {
@@ -32,6 +55,7 @@ const ACTION_OPTIONS = {
   streamSensors: true,
   moduleRoot: ACTION_MODULE_DIR,
   onSensorFrame: handleSensorFrame,
+  board: sharedBoard,
 };
 
 let sensorDisplayActive = false;
@@ -110,8 +134,10 @@ async function playStartMessage() {
   console.log("Emotion:", emotion);
   console.log("Context:", contextLabel);
 
+  await neoPixel.showEmotion(emotion);
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
   await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  await neoPixel.off();
 }
 
 async function handleConversationTurn() {
@@ -123,6 +149,7 @@ async function handleConversationTurn() {
   setSensorDisplayActive(false);
 
   try {
+    await neoPixel.showRecording();
     await recordAudio(INPUT_AUDIO_PATH, {
       startThreshold: parseFloat(config.vad.start_threshold_volume) / 100.0,
       endThreshold: parseFloat(config.vad.end_threshold_volume) / 100.0,
@@ -132,10 +159,12 @@ async function handleConversationTurn() {
       onSpeechStart: () => setSensorDisplayActive(true),
     });
   } catch (err) {
+    await neoPixel.off();
     await resetActionRecognizer();
     throw err;
   }
 
+  await neoPixel.showWaiting();
   const recordedDuration = getWavDurationSeconds(INPUT_AUDIO_PATH);
   const actionPromise = actionRecognizer
     .stopAndGetAction()
@@ -147,6 +176,7 @@ async function handleConversationTurn() {
     );
     await actionPromise; // 센서 프로세스 상태 복구
     setSensorDisplayActive(false);
+    await neoPixel.off();
     return;
   }
 
@@ -183,8 +213,12 @@ async function handleConversationTurn() {
   console.log("Context:", contextLabel);
 
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
-  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
-
+  try {
+    await neoPixel.showEmotion(emotion);
+    await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  } finally {
+    await neoPixel.off();
+  }
   return contextLabel;
 }
 
@@ -199,7 +233,13 @@ async function mainLoop() {
   attachStatusDisplay();
   registerLedAdapter(new ConsoleLedAdapter());
   setSensorDisplayActive(false);
+  await sharedBoardReady.catch((err) => {
+    console.error("Shared board failed to initialize:", err);
+    process.exit(1);
+  });
   await actionRecognizer.ensureReady();
+  await neoPixel.ensureReady();
+  await neoPixel.off();
   console.log(`LLM model: ${gptModel}`);
 
   await playStartMessage();
@@ -215,6 +255,7 @@ async function mainLoop() {
     } catch (err) {
       console.error("Turn failed:", err);
       await resetActionRecognizer();
+      await neoPixel.off();
     }
     console.log("Cooling down before next turn...");
     await sleep(3000);

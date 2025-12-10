@@ -76,11 +76,16 @@ function computeActivityScores(frames, opts) {
     const [dp, ax, ay, az, gx, gy, gz] = frame;
     const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
     const gyroMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
-    const pressureTerm = Math.abs(dp) / basePressure;
+    // Use only upward (positive) pressure deltas; ignore negative by clamping to 0.
+    const pressureTerm = Math.max(0, dp) / basePressure;
     const accelTerm = Math.abs(accelMag - baseAccel) / baseAccel;
     const gyroTerm = Math.abs(gyroMag - baseGyro) / baseGyro;
     const raw = weightPressure * pressureTerm + weightAccel * accelTerm + weightGyro * gyroTerm;
     scores.push(raw);
+    // if (terms) {
+    //   terms.push({ pressureTerm, accelTerm, gyroTerm });
+    //   return { scores, terms };
+    // }
   }
   return scores;
 }
@@ -205,6 +210,9 @@ export class InlineActionRecognizer {
       ...options,
     };
 
+    // Track ownership so we don't reset a shared board during cleanup.
+    this.ownsBoard = !this.options.board;
+
     dotenv.config({ path: path.join(moduleRoot, ".env") });
 
     this.latestPressure = null;
@@ -226,56 +234,71 @@ export class InlineActionRecognizer {
   }
 
   async initializeBoard() {
-    const boardOptions = { repl: false };
-    const serialPort = this.options.port?.trim() || process.env.SERIAL_PORT?.trim();
-    if (serialPort) {
-      boardOptions.port = serialPort;
-    }
-    this.board = new Board(boardOptions);
+    const setupSensors = async () => {
+      console.log("Johnny-Five board ready. Initializing sensors...");
+      this.pressureSensor = new Sensor({ pin: this.options.pressurePin, freq: this.options.sampleMs });
+      this.imu = new IMU({ controller: this.options.imuController, freq: this.options.sampleMs });
 
-    return new Promise((resolve, reject) => {
-      this.board.on("error", (err) => reject(err));
-      this.board.on("ready", async () => {
-        console.log("Johnny-Five board ready. Initializing sensors...");
-        try {
-          this.pressureSensor = new Sensor({ pin: this.options.pressurePin, freq: this.options.sampleMs });
-          this.imu = new IMU({ controller: this.options.imuController, freq: this.options.sampleMs });
+      this.pressureSensor.on("change", () => {
+        this.latestPressure = this.pressureSensor.value;
+      });
+      this.imu.on("change", () => {
+        this.latestAccel = {
+          x: this.imu.accelerometer.x,
+          y: this.imu.accelerometer.y,
+          z: this.imu.accelerometer.z,
+        };
+        this.latestGyro = {
+          x: this.imu.gyro.x,
+          y: this.imu.gyro.y,
+          z: this.imu.gyro.z,
+        };
+      });
 
-          this.pressureSensor.on("change", () => {
-            this.latestPressure = this.pressureSensor.value;
-          });
-          this.imu.on("change", () => {
-            this.latestAccel = {
-              x: this.imu.accelerometer.x,
-              y: this.imu.accelerometer.y,
-              z: this.imu.accelerometer.z,
-            };
-            this.latestGyro = {
-              x: this.imu.gyro.x,
-              y: this.imu.gyro.y,
-              z: this.imu.gyro.z,
-            };
-          });
+      await waitForSensors(
+        () => this.latestPressure !== null && this.latestAccel !== null && this.latestGyro !== null,
+      );
+      this.baselines = await calibrateBaselines(
+        () => this.latestPressure,
+        () => this.latestAccel,
+        () => this.latestGyro,
+        this.options.baselineSamples,
+        this.options.sampleMs,
+      );
 
-          await waitForSensors(
-            () => this.latestPressure !== null && this.latestAccel !== null && this.latestGyro !== null,
-          );
-          this.baselines = await calibrateBaselines(
-            () => this.latestPressure,
-            () => this.latestAccel,
-            () => this.latestGyro,
-            this.options.baselineSamples,
-            this.options.sampleMs,
-          );
+      this.pollTimer = setInterval(() => this.captureFrame(), this.options.sampleMs);
+      this.ready = true;
+    };
 
-          this.pollTimer = setInterval(() => this.captureFrame(), this.options.sampleMs);
-          this.ready = true;
-          resolve();
-        } catch (err) {
-          reject(err);
+    const existingBoard = this.options.board;
+    if (existingBoard) {
+      this.board = existingBoard;
+      return new Promise((resolve, reject) => {
+        const onReady = async () => {
+          try {
+            await setupSensors();
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        };
+        const onError = (err) => reject(err);
+
+        if (existingBoard.isReady) {
+          onReady();
+        } else {
+          existingBoard.once("ready", onReady);
+          existingBoard.once("error", onError);
         }
       });
-    });
+    }
+
+    // If no board was provided, fail fast instead of creating a new one.
+    const err = new Error(
+      "InlineActionRecognizer requires an existing Johnny-Five board. Pass it via options.board.",
+    );
+    this.ready = false;
+    return Promise.reject(err);
   }
 
   captureFrame() {
@@ -416,10 +439,12 @@ export class InlineActionRecognizer {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
-    try {
-      this.board?.io?.reset?.();
-    } catch (_) {
-      /* noop */
+    if (this.ownsBoard) {
+      try {
+        this.board?.io?.reset?.();
+      } catch (_) {
+        /* noop */
+      }
     }
   }
 }

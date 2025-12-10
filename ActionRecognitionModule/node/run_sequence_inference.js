@@ -37,6 +37,12 @@ program
   .option("--pressure-pin <pin>", "Analog pin used for the pressure sensor", "A0")
   .option("--imu-controller <name>", "Johnny-Five IMU controller name", "MPU6050")
   .option("--sample-ms <ms>", "Sampling interval (ms)", (value) => parseInt(value, 10), 20)
+  .option(
+    "--sample-log-every <count>",
+    "How many frames between progress logs while recording (default: 10)",
+    (value) => parseInt(value, 10),
+    10,
+  )
   .option("--baseline-samples <count>", "Samples for pressure baseline", (value) => parseInt(value, 10), 200)
   .option("--python <cmd>", "Python interpreter to run sequence_infer.py", DEFAULT_PYTHON)
   .option(
@@ -47,12 +53,12 @@ program
   .option(
     "--model <path>",
     "Path to sequence_classifier.pt",
-    path.resolve(MODULE_ROOT, "models", "sequence_classifier_20251201_more.pt"),
+    path.resolve(MODULE_ROOT, "models", "251209pillowmate_full_many.pt"),
   )
   .option(
     "--config <path>",
     "Path to sequence_config.json",
-    path.resolve(MODULE_ROOT, "models", "sequence_config_20251201_more.json"),
+    path.resolve(MODULE_ROOT, "models", "251209pillowmate_full_many.json"),
   )
   .option("--python-device <device>", "Device passed to sequence_infer.py (cpu/cuda/mps)", "cpu")
   .option(
@@ -82,6 +88,7 @@ program
   .option("--stream-sensors", "Continuously print sensor readings", false);
 
 const options = program.parse(process.argv).opts();
+const sampleLogEvery = Math.max(1, Number.isFinite(options.sampleLogEvery) ? options.sampleLogEvery : 1);
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -209,7 +216,8 @@ function computeActivityScores(frames, opts) {
     const [dp, ax, ay, az, gx, gy, gz] = frame;
     const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
     const gyroMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
-    const pressureTerm = Math.abs(dp) / basePressure;
+    // Use only upward (positive) pressure deltas; ignore negative by clamping to 0.
+    const pressureTerm = Math.max(0, dp) / basePressure;
     const accelTerm = Math.abs(accelMag - baseAccel) / baseAccel;
     const gyroTerm = Math.abs(gyroMag - baseGyro) / baseGyro;
     const raw = weightPressure * pressureTerm + weightAccel * accelTerm + weightGyro * gyroTerm;
@@ -433,7 +441,7 @@ board.on("ready", async () => {
             latestGyro.z,
           ];
           frames.push(frame);
-          if (!options.quiet && frames.length % Math.max(1, Math.floor(1000 / options.sampleMs)) === 0) {
+          if (!options.quiet && frames.length % sampleLogEvery === 0) {
             console.log(
               `${frames.length} samples collected... ΔP=${frame[0].toFixed(2)} ax=${frame[1].toFixed(2)} ay=${frame[2].toFixed(2)} az=${frame[3].toFixed(2)} gx=${frame[4].toFixed(2)} gy=${frame[5].toFixed(2)} gz=${frame[6].toFixed(2)}`,
             );
