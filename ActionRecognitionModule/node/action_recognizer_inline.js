@@ -293,24 +293,12 @@ export class InlineActionRecognizer {
       });
     }
 
-    const boardOptions = { repl: false };
-    const serialPort = this.options.port?.trim() || process.env.SERIAL_PORT?.trim();
-    if (serialPort) {
-      boardOptions.port = serialPort;
-    }
-    this.board = new Board(boardOptions);
-
-    return new Promise((resolve, reject) => {
-      this.board.on("error", (err) => reject(err));
-      this.board.on("ready", async () => {
-        try {
-          await setupSensors();
-          resolve();
-        } catch (err) {
-          reject(err);
-        }
-      });
-    });
+    // If no board was provided, fail fast instead of creating a new one.
+    const err = new Error(
+      "InlineActionRecognizer requires an existing Johnny-Five board. Pass it via options.board.",
+    );
+    this.ready = false;
+    return Promise.reject(err);
   }
 
   captureFrame() {

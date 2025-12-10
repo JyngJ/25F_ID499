@@ -1,12 +1,6 @@
 import five from "johnny-five";
 import pixel from "node-pixel";
 
-const DEFAULT_PORT =
-  process.env.SERIAL_PORT ||
-  process.env.NEOPIXEL_PORT ||
-  process.env.ARDUINO_PORT ||
-  process.env.BOARD_PORT ||
-  null;
 const DEFAULT_PIN = Number(process.env.NEOPIXEL_PIN || 6);
 const DEFAULT_LENGTH = 44;
 
@@ -35,7 +29,6 @@ export const EMOTION_PATTERN_MAP = {
 class NeoPixelController {
   constructor(options = {}) {
     this.options = {
-      port: DEFAULT_PORT,
       pin: DEFAULT_PIN,
       length: DEFAULT_LENGTH,
       colorOrder: pixel.COLOR_ORDER.GRB,
@@ -91,36 +84,25 @@ class NeoPixelController {
 
     this.readyPromise = new Promise((resolve) => {
       const externalBoard = this.options.board;
-      if (externalBoard) {
-        this.board = externalBoard;
-        const onReady = () => initStrip(externalBoard, resolve);
-        if (externalBoard.isReady) {
-          onReady();
-        } else {
-          externalBoard.once("ready", onReady);
-          externalBoard.once("error", (err) => {
-            console.error("Board Error:", err?.message ?? err);
-            this.failed = true;
-            resolve(false);
-          });
-        }
+      if (!externalBoard) {
+        console.error("NeoPixelController requires an existing Johnny-Five board. Call setBoard(board).");
+        this.failed = true;
+        resolve(false);
         return;
       }
 
-      this.board = new five.Board({
-        port: this.options.port || undefined,
-        repl: false,
-        debug: false,
-        timeout: 30000,
-      });
-
-      this.board.on("ready", () => initStrip(this.board, resolve));
-
-      this.board.on("error", (err) => {
-        console.error("Board Error:", err?.message ?? err);
-        this.failed = true;
-        resolve(false);
-      });
+      this.board = externalBoard;
+      const onReady = () => initStrip(externalBoard, resolve);
+      if (externalBoard.isReady) {
+        onReady();
+      } else {
+        externalBoard.once("ready", onReady);
+        externalBoard.once("error", (err) => {
+          console.error("Board Error:", err?.message ?? err);
+          this.failed = true;
+          resolve(false);
+        });
+      }
     });
 
     return this.readyPromise;
