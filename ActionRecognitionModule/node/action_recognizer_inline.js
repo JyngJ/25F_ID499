@@ -76,11 +76,16 @@ function computeActivityScores(frames, opts) {
     const [dp, ax, ay, az, gx, gy, gz] = frame;
     const accelMag = Math.sqrt(ax * ax + ay * ay + az * az);
     const gyroMag = Math.sqrt(gx * gx + gy * gy + gz * gz);
-    const pressureTerm = Math.abs(dp) / basePressure;
+    // Use only upward (positive) pressure deltas; ignore negative by clamping to 0.
+    const pressureTerm = Math.max(0, dp) / basePressure;
     const accelTerm = Math.abs(accelMag - baseAccel) / baseAccel;
     const gyroTerm = Math.abs(gyroMag - baseGyro) / baseGyro;
     const raw = weightPressure * pressureTerm + weightAccel * accelTerm + weightGyro * gyroTerm;
     scores.push(raw);
+    // if (terms) {
+    //   terms.push({ pressureTerm, accelTerm, gyroTerm });
+    //   return { scores, terms };
+    // }
   }
   return scores;
 }
