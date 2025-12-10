@@ -16,8 +16,6 @@ const __dirname = getDirname(import.meta.url); // Use getDirname
 const INPUT_AUDIO_PATH  = path.join(__dirname, 'assets', 'input.wav');
 const OUTPUT_AUDIO_PATH = path.join(__dirname, 'assets', 'reply.mp3');
 
-const INITIAL_PROMPT = config.initial_prompt;
-
 let conversationHistory = []; // System prompt is now handled by askPillowMate
 
 
@@ -74,16 +72,6 @@ async function mainLoop() {
 
   // 의존성 확인
   await checkDependency(process.platform === 'win32' ? 'sox' : 'rec', 'brew install sox (macOS) / conda install -c conda-forge sox');
-
-  // Initial prompt from PillowMate
-  try {
-      await textToSpeech(INITIAL_PROMPT, OUTPUT_AUDIO_PATH);
-  } catch(e) { console.log('TTS Skip:', e.message); }
-
-  
-  conversationHistory.push({ role: 'assistant', content: INITIAL_PROMPT });
-  console.log('PillowMate:', INITIAL_PROMPT);
-  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
 
 
   while (true) {

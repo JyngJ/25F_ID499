@@ -1,7 +1,7 @@
 import path from "path";
 import fs from "fs";
 import { createTranscription, textToSpeech } from "./audio.js";
-import { askPillowMate } from "./gpt_chat.js";
+import { askPillowMate, gptModel } from "./gpt_chat.js";
 import { recordAudio, registerLedAdapter } from "./recorder.js";
 import { updateSensorDisplay, attachStatusDisplay } from "./status_display.js";
 import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from "./utils.js";
@@ -172,9 +172,15 @@ async function handleConversationTurn() {
   conversationHistory.push({ role: "user", content: userAugmentedText });
 
   const gptResponse = await askPillowMate(conversationHistory);
-  const replyText = gptResponse.text;
-  const emotion = gptResponse.emotion ?? "neutral";
-  const contextLabel = gptResponse.context_label ?? "chat";
+  if (!gptResponse || typeof gptResponse.text !== "string" || !gptResponse.text.trim()) {
+    console.warn("LLM returned no text. Raw response:", gptResponse);
+  }
+  const replyText =
+    typeof gptResponse?.text === "string" && gptResponse.text.trim().length > 0
+      ? gptResponse.text
+      : "미안해, 방금 제대로 답을 만들지 못했어. 한 번만 더 말해줄래?";
+  const emotion = gptResponse?.emotion ?? "neutral";
+  const contextLabel = gptResponse?.context_label ?? "chat";
 
   conversationHistory.push({ role: "assistant", content: replyText });
 
@@ -189,6 +195,7 @@ async function handleConversationTurn() {
   } finally {
     await neoPixel.off();
   }
+  return contextLabel;
 }
 
 async function mainLoop() {
@@ -205,13 +212,18 @@ async function mainLoop() {
   await actionRecognizer.ensureReady();
   await neoPixel.ensureReady();
   await neoPixel.off();
+  console.log(`LLM model: ${gptModel}`);
 
   await playStartMessage();
 
   while (true) {
     console.log("\n----- Start a new turn -----");
     try {
-      await handleConversationTurn();
+      const contextLabel = await handleConversationTurn();
+      if (contextLabel === "wrap_up") {
+        console.log("Wrap-up reached. Ending session.");
+        break;
+      }
     } catch (err) {
       console.error("Turn failed:", err);
       await resetActionRecognizer();
@@ -220,6 +232,12 @@ async function mainLoop() {
     console.log("Cooling down before next turn...");
     await sleep(3000);
   }
+
+  // Clean up before exit
+  if (actionRecognizer) {
+    actionRecognizer.dispose();
+  }
+  process.exit(0);
 }
 
 mainLoop().catch((err) => {
