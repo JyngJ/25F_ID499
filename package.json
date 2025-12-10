@@ -6,12 +6,23 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "overrides": {
+    "serialport": "^11.0.0",
+    "firmata": {
+      "serialport": "^11.0.0"
+    },
+    "node-pixel": {
+      "serialport": "^11.0.0"
+    }
+  },
   "dependencies": {
     "@ricky0123/vad-node": "^0.0.3",
     "axios": "^1.12.2",
     "commander": "^12.1.0",
     "dotenv": "^17.2.3",
     "johnny-five": "^2.1.0",
+    "node-pixel": "^0.10.5",
+    "serialport": "^11.0.0",
     "mic": "^2.1.2",
     "nodeplotlib": "^1.1.2",
     "onnxruntime-node": "^1.23.2",

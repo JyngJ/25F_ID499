@@ -7,6 +7,7 @@ import { updateSensorDisplay, attachStatusDisplay } from "./status_display.js";
 import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from "./utils.js";
 import { config } from "./config.js";
 import { InlineActionRecognizer } from "./ActionRecognitionModule/node/action_recognizer_inline.js";
+import { neoPixel } from "./neopixel_controller.js";
 
 const __dirname = getDirname(import.meta.url);
 const INPUT_AUDIO_PATH = path.join(__dirname, "assets", "input.wav");
@@ -109,8 +110,10 @@ async function playStartMessage() {
   console.log("Emotion:", emotion);
   console.log("Context:", contextLabel);
 
+  await neoPixel.showEmotion(emotion);
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
   await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  await neoPixel.off();
 }
 
 async function handleConversationTurn() {
@@ -122,6 +125,7 @@ async function handleConversationTurn() {
   setSensorDisplayActive(false);
 
   try {
+    await neoPixel.showRecording();
     await recordAudio(INPUT_AUDIO_PATH, {
       startThreshold: parseFloat(config.vad.start_threshold_volume) / 100.0,
       endThreshold: parseFloat(config.vad.end_threshold_volume) / 100.0,
@@ -131,10 +135,12 @@ async function handleConversationTurn() {
       onSpeechStart: () => setSensorDisplayActive(true),
     });
   } catch (err) {
+    await neoPixel.off();
     await resetActionRecognizer();
     throw err;
   }
 
+  await neoPixel.showWaiting();
   const recordedDuration = getWavDurationSeconds(INPUT_AUDIO_PATH);
   const actionPromise = actionRecognizer
     .stopAndGetAction()
@@ -146,6 +152,7 @@ async function handleConversationTurn() {
     );
     await actionPromise; // 센서 프로세스 상태 복구
     setSensorDisplayActive(false);
+    await neoPixel.off();
     return;
   }
 
@@ -176,7 +183,12 @@ async function handleConversationTurn() {
   console.log("Context:", contextLabel);
 
   await textToSpeech(replyText, OUTPUT_AUDIO_PATH);
-  await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  try {
+    await neoPixel.showEmotion(emotion);
+    await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
+  } finally {
+    await neoPixel.off();
+  }
 }
 
 async function mainLoop() {
@@ -191,6 +203,8 @@ async function mainLoop() {
   registerLedAdapter(new ConsoleLedAdapter());
   setSensorDisplayActive(false);
   await actionRecognizer.ensureReady();
+  await neoPixel.ensureReady();
+  await neoPixel.off();
 
   await playStartMessage();
 
@@ -201,6 +215,7 @@ async function mainLoop() {
     } catch (err) {
       console.error("Turn failed:", err);
       await resetActionRecognizer();
+      await neoPixel.off();
     }
     console.log("Cooling down before next turn...");
     await sleep(3000);
