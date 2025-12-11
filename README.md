@@ -79,7 +79,7 @@ Action 인식만 따로 점검하려면 ActionRecognitionModule/node/run_sequenc
 2.  Python과 PyTorch가 준비돼 있어야 합니다(`python` 명령과 ActionRecognitionModule/python/sequence_infer.py가 동작해야 합니다).
 3.  다음 명령으로 실행:
     ```bash
-    node node/run_sequence_inference.js \
+    cd ActionRecognitionModule && node node/run_sequence_inference.js \
     --model models/251210pillowmate_full.pt \
     --config models/251210pillowmate_full.json \
     --low-pass-window 5 \
