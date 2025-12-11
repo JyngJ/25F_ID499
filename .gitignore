@@ -22,3 +22,6 @@ __pycache__/
 # Trained models/configs
 # /ActionRecognitionModule/models/sequence_classifier*.pt
 # /ActionRecognitionModule/models/sequence_config*.json
+
+# arduino-combi-demo
+.pio/

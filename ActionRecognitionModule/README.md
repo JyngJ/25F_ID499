@@ -270,6 +270,7 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
 - 예시
   ```bash
   node node/run_sequence_inference.js \
+
     --low-pass-window 5 \
     --auto-idle --idle-label idle \
     --idle-pressure-std 20 --idle-pressure-mean 40 \
@@ -277,6 +278,7 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
     --activity-high 100 --activity-low 10 \
     --activity-min-frames 5 --activity-pad-frames 0 \
     --activity-gap-merge 100 \
-    --activity-weight-pressure 0.000001 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
-    --activity-plot
+    --activity-weight-pressure 0.000002 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
+    --activity-plot \
+    --sample-log-every 5
   ```
