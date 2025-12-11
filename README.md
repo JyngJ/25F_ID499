@@ -79,7 +79,19 @@ Action 인식만 따로 점검하려면 ActionRecognitionModule/node/run_sequenc
 2.  Python과 PyTorch가 준비돼 있어야 합니다(`python` 명령과 ActionRecognitionModule/python/sequence_infer.py가 동작해야 합니다).
 3.  다음 명령으로 실행:
     ```bash
-    node ActionRecognitionModule/node/run_sequence_inference.js
+    node node/run_sequence_inference.js \
+    --model models/251210pillowmate_full.pt \
+    --config models/251210pillowmate_full.json \
+    --low-pass-window 5 \
+    --auto-idle --idle-label idle \
+    --idle-pressure-std 20 --idle-pressure-mean 40 \
+    --idle-accel-std 0.1 --idle-gyro-std 5 \
+    --activity-high 100 --activity-low 10 \
+    --activity-min-frames 5 --activity-pad-frames 0 \
+    --activity-gap-merge 100 \
+    --activity-weight-pressure 0.000002 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
+    --activity-plot \
+    --sample-log-every 50
     ```
     Enter를 눌러 녹음을 시작/종료하면, 수집된 센서 데이터를 Python 모듈이 추론해 label/probability를 출력합니다.
 

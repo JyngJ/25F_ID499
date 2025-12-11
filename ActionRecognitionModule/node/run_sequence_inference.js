@@ -53,12 +53,12 @@ program
   .option(
     "--model <path>",
     "Path to sequence_classifier.pt",
-    path.resolve(MODULE_ROOT, "models", "251209pillowmate_full_many.pt"),
+    path.resolve(MODULE_ROOT, "models", "251210pillowmate_full_many.pt"),
   )
   .option(
     "--config <path>",
     "Path to sequence_config.json",
-    path.resolve(MODULE_ROOT, "models", "251209pillowmate_full_many.json"),
+    path.resolve(MODULE_ROOT, "models", "251210pillowmate_full_many.json"),
   )
   .option("--python-device <device>", "Device passed to sequence_infer.py (cpu/cuda/mps)", "cpu")
   .option(
@@ -78,7 +78,7 @@ program
   .option("--activity-min-frames <count>", "Minimum frames to keep an activity block", (value) => parseInt(value, 10), 5)
   .option("--activity-pad-frames <count>", "Frames of context to pad around each block", (value) => parseInt(value, 10), 0)
   .option("--activity-gap-merge <count>", "Merge blocks if idle gap <= this", (value) => parseInt(value, 10), 100)
-  .option("--activity-weight-pressure <value>", "Weight for pressure in activity score", (value) => parseFloat(value), 0.000001)
+  .option("--activity-weight-pressure <value>", "Weight for pressure in activity score", (value) => parseFloat(value), 0.000002)
   .option("--activity-weight-accel <value>", "Weight for accel magnitude in activity score", (value) => parseFloat(value), 150.0)
   .option("--activity-weight-gyro <value>", "Weight for gyro magnitude in activity score", (value) => parseFloat(value), 500.0)
   .option("--disable-activity-segmentation", "Send whole sequence without idle trimming", false)

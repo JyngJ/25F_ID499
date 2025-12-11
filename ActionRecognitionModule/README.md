@@ -268,17 +268,19 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
   - 센서 오프셋이 크면 auto-idle 임계와 activity 임계 둘 다 노이즈에 맞춰 조정하거나, 가동 직후 안정화 시간을 두고 캡처하세요.
 
 - 예시
-  ```bash
-  node node/run_sequence_inference.js \
 
-    --low-pass-window 5 \
-    --auto-idle --idle-label idle \
-    --idle-pressure-std 20 --idle-pressure-mean 40 \
-    --idle-accel-std 0.1 --idle-gyro-std 5 \
-    --activity-high 100 --activity-low 10 \
-    --activity-min-frames 5 --activity-pad-frames 0 \
-    --activity-gap-merge 100 \
-    --activity-weight-pressure 0.000002 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
-    --activity-plot \
-    --sample-log-every 5
-  ```
+```bash
+node node/run_sequence_inference.js \
+  --model models/251210pillowmate_full.pt \
+  --config models/251210pillowmate_full.json \
+  --low-pass-window 5 \
+  --auto-idle --idle-label idle \
+  --idle-pressure-std 20 --idle-pressure-mean 40 \
+  --idle-accel-std 0.1 --idle-gyro-std 5 \
+  --activity-high 100 --activity-low 10 \
+  --activity-min-frames 5 --activity-pad-frames 0 \
+  --activity-gap-merge 100 \
+  --activity-weight-pressure 0.000002 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
+  --activity-plot \
+  --sample-log-every 50
+```
