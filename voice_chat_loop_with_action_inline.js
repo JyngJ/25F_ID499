@@ -17,10 +17,11 @@ const MIN_AUDIO_SECONDS = 1; // Whisper는 0.1s 미만 거절. 0.2s 미만이면
 
 const ACTION_MODULE_DIR = path.join(__dirname, "ActionRecognitionModule");
 
+const ACTION_MODEL_BASENAME = "251210pillowmate_full_many";
+
 // Single shared Johnny-Five board for both sensors and NeoPixel.
 const sharedBoardPort =
   process.env.SERIAL_PORT?.trim() ||
-  process.env.NEOPIXEL_PORT?.trim() ||
   process.env.BOARD_PORT?.trim() ||
   undefined;
 const sharedBoard = new five.Board({
@@ -38,9 +39,8 @@ const sharedBoardReady = new Promise((resolve, reject) => {
 });
 neoPixel.setBoard(sharedBoard);
 
-const ACTION_MODEL_BASENAME = "251209pillowmate_full";
 const ACTION_OPTIONS = {
-  modelPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}_many.pt`),
+  modelPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}.pt`),
   configPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}.json`),
   lowPassWindow: 5,
   autoIdle: {
@@ -257,8 +257,8 @@ async function mainLoop() {
       await resetActionRecognizer();
       await neoPixel.off();
     }
-    console.log("Cooling down before next turn...");
-    await sleep(3000);
+    console.log("Cooling down before next turn... (1s)");
+    await sleep(1000);
   }
 
   // Clean up before exit

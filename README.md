@@ -44,8 +44,9 @@ PillowMate를 실행하려면 다음 단계를 따르세요.
 3.  `.env` 파일 설정: 프로젝트 루트 디렉토리에 `.env` 파일을 생성하고, OpenAI API 키를 추가합니다.
     ```
     OPENAI_API_KEY=YOUR_OPENAI_API_KEY
+    SERIAL_PORT=/dev/tty.usbmodem141101
     ```
-    `YOUR_OPENAI_API_KEY` 부분을 자신의 OpenAI API 키로 교체하세요.
+    `YOUR_OPENAI_API_KEY` 부분을 자신의 OpenAI API 키로 교체하세요. 그리고`SERIAL_PORT` 값을 넣어 주세요(센서/보드 연결 포트).
 
 ### 3. 설정
 
@@ -66,9 +67,21 @@ PillowMate의 행동과 기술적 세부 사항은 두 개의 파일을 통해 �
 
 *   **연속 대화 루프 실행:**
     ```bash
-    node voice_chat_loop.js
+    node voice_chat_loop_with_action_inline.js
     ```
-    이 명령은 PillowMate와 사용자 간의 대화 사이클을 계속 반복합니다.
+    이 명령은 PillowMate와 사용자 간의 대화 사이클을 계속 반복합니다. Action 인식 Inline 모듈이 포함된 현재 메인 실행 진입점입니다.
+
+### Action 인식 단독 테스트 (run_sequence_inference.js)
+
+Action 인식만 따로 점검하려면 ActionRecognitionModule/node/run_sequence_inference.js를 실행하세요.
+
+1.  ActionRecognitionModule/.env에 `SERIAL_PORT`를 설정합니다(루트 .env의 포트값과 동일하게 맞추면 됩니다).
+2.  Python과 PyTorch가 준비돼 있어야 합니다(`python` 명령과 ActionRecognitionModule/python/sequence_infer.py가 동작해야 합니다).
+3.  다음 명령으로 실행:
+    ```bash
+    node ActionRecognitionModule/node/run_sequence_inference.js
+    ```
+    Enter를 눌러 녹음을 시작/종료하면, 수집된 센서 데이터를 Python 모듈이 추론해 label/probability를 출력합니다.
 
 ## 코드 구조
 
@@ -79,5 +92,6 @@ PillowMate의 행동과 기술적 세부 사항은 두 개의 파일을 통해 �
 *   `recorder.js`: 시각적 피드백이 포함된 마이크 녹음 및 VAD(음성 활동 감지) 모듈입니다.
 *   `utils.js`: `runCommand`, `getDirname`, `sleep`과 같은 공통 유틸리티 함수를 포함합니다.
 *   `voice_chat.js`: 단일 대화 턴을 처리하는 메인 스크립트입니다.
-*   `voice_chat_loop.js`: 연속 대화 루프를 처리하는 스크립트입니다.
+*   `voice_chat_loop_with_action_inline.js`: 연속 대화 루프를 처리하며 Inline Action 인식 모듈을 포함한 메인 스크립트입니다.
+*   `neopixel_controller.js`: 감정/상태에 따라 네오픽셀 LED 패턴을 구동하는 컨트롤러입니다(보드 포트는 `.env`의 `SERIAL_PORT`로 지정).
 *   `assets/`: 녹음된 사용자 음성(`input.wav`) 및 PillowMate 응답 오디오(`reply.mp3`)를 저장합니다.
