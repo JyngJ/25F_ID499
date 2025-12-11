@@ -160,8 +160,8 @@ python train_sequence_model.py \
 ```bash
 cd ActionRecognitionModule
 node node/run_sequence_inference.js \
-  --model models/251209pillowmate_full.pt \
-  --config models/251209pillowmate_full.json \
+  --model models/251210pillowmate_full.pt \
+  --config models/251210pillowmate_full.json \
   --low-pass-window 5 \
   --auto-idle \
   --idle-label idle \
@@ -169,7 +169,7 @@ node node/run_sequence_inference.js \
   --idle-pressure-mean 40 \
   --idle-accel-std 0.1 \
   --idle-gyro-std 5 \
-  --python-device mps
+  --python-device cpu
 ```
 
 - Enter → 녹화 시작, 행동 수행 → Enter → Python 추론 실행 → 결과 출력.
