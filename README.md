@@ -48,6 +48,12 @@ PillowMate를 실행하려면 다음 단계를 따르세요.
     ```
     `YOUR_OPENAI_API_KEY` 부분을 자신의 OpenAI API 키로 교체하세요. 그리고`SERIAL_PORT` 값을 넣어 주세요(센서/보드 연결 포트).
 
+4. Python 패키지를 설치합니다.
+    ```bash
+    pip install torch==2.3.1 --extra-index-url https://download.pytorch.org/whl/cpu
+    pip install numpy scikit-learn
+    ```
+
 ### 3. 설정
 
 PillowMate의 행동과 기술적 세부 사항은 두 개의 파일을 통해 쉽게 설정할 수 있습니다.
