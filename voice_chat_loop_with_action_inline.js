@@ -4,7 +4,13 @@ import { createTranscription, textToSpeech } from "./audio.js";
 import { askPillowMate, gptModel } from "./gpt_chat.js";
 import { recordAudio, registerLedAdapter } from "./recorder.js";
 import { updateSensorDisplay, attachStatusDisplay } from "./status_display.js";
-import { buildPlaybackCommand, runCommand, getDirname, sleep, checkDependency } from "./utils.js";
+import {
+  buildPlaybackCommand,
+  runCommand,
+  getDirname,
+  sleep,
+  checkDependency,
+} from "./utils.js";
 import { config } from "./config.js";
 import { InlineActionRecognizer } from "./ActionRecognitionModule/node/action_recognizer_inline.js";
 import { neoPixel } from "./neopixel_controller.js";
@@ -40,8 +46,16 @@ const sharedBoardReady = new Promise((resolve, reject) => {
 neoPixel.setBoard(sharedBoard);
 
 const ACTION_OPTIONS = {
-  modelPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}.pt`),
-  configPath: path.join(ACTION_MODULE_DIR, "models", `${ACTION_MODEL_BASENAME}.json`),
+  modelPath: path.join(
+    ACTION_MODULE_DIR,
+    "models",
+    `${ACTION_MODEL_BASENAME}.pt`
+  ),
+  configPath: path.join(
+    ACTION_MODULE_DIR,
+    "models",
+    `${ACTION_MODEL_BASENAME}.json`
+  ),
   lowPassWindow: 5,
   autoIdle: {
     enabled: true,
@@ -97,8 +111,12 @@ function getWavDurationSeconds(filePath) {
 function handleSensorFrame(data) {
   if (!sensorDisplayActive) return;
   const dp = data.dp ?? 0;
-  const accelMag = Math.sqrt((data.ax ?? 0) ** 2 + (data.ay ?? 0) ** 2 + (data.az ?? 0) ** 2);
-  const gyroMag = Math.sqrt((data.gx ?? 0) ** 2 + (data.gy ?? 0) ** 2 + (data.gz ?? 0) ** 2);
+  const accelMag = Math.sqrt(
+    (data.ax ?? 0) ** 2 + (data.ay ?? 0) ** 2 + (data.az ?? 0) ** 2
+  );
+  const gyroMag = Math.sqrt(
+    (data.gx ?? 0) ** 2 + (data.gy ?? 0) ** 2 + (data.gz ?? 0) ** 2
+  );
   const line = `pressure ${dp.toFixed(1)} | accel ${accelMag.toFixed(2)} | gyro ${gyroMag.toFixed(2)}`;
   updateSensorDisplay(line);
 }
@@ -120,7 +138,8 @@ async function playStartMessage() {
   // Seed the model to produce a start-context greeting instead of a fixed prompt.
   const seedUser = {
     role: "user",
-    content: "Session start. voice_text: (none yet). action_label: idle. Please begin.",
+    content:
+      "Session start. voice_text: (none yet). action_label: idle. Please begin.",
   };
   const startResponse = await askPillowMate([seedUser]);
   const replyText = startResponse.text;
@@ -149,7 +168,7 @@ async function handleConversationTurn() {
   setSensorDisplayActive(false);
 
   try {
-    await neoPixel.showRecording();
+    await neoPixel.showListening();
     await recordAudio(INPUT_AUDIO_PATH, {
       startThreshold: parseFloat(config.vad.start_threshold_volume) / 100.0,
       endThreshold: parseFloat(config.vad.end_threshold_volume) / 100.0,
@@ -164,7 +183,7 @@ async function handleConversationTurn() {
     throw err;
   }
 
-  await neoPixel.showWaiting();
+  await neoPixel.showProcessing();
   const recordedDuration = getWavDurationSeconds(INPUT_AUDIO_PATH);
   const actionPromise = actionRecognizer
     .stopAndGetAction()
@@ -172,7 +191,7 @@ async function handleConversationTurn() {
 
   if (recordedDuration < MIN_AUDIO_SECONDS) {
     console.log(
-      `🕑 녹음 길이 ${(recordedDuration * 1000).toFixed(0)}ms (너무 짧음). 다시 듣기 모드로 전환합니다.`,
+      `🕑 녹음 길이 ${(recordedDuration * 1000).toFixed(0)}ms (너무 짧음). 다시 듣기 모드로 전환합니다.`
     );
     await actionPromise; // 센서 프로세스 상태 복구
     setSensorDisplayActive(false);
@@ -187,16 +206,20 @@ async function handleConversationTurn() {
   const actionResult = await actionPromise;
   setSensorDisplayActive(false);
   console.log(
-    `Detected action: ${actionResult.label} (${(actionResult.probability * 100).toFixed(1)}%)`,
+    `Detected action: ${actionResult.label} (${(actionResult.probability * 100).toFixed(1)}%)`
   );
 
-  const userAugmentedText = `${userText}\n\n[Detected action: ${actionResult.label} (${
-    (actionResult.probability * 100).toFixed(1)
-  }%)]`;
+  const userAugmentedText = `${userText}\n\n[Detected action: ${actionResult.label} (${(
+    actionResult.probability * 100
+  ).toFixed(1)}%)]`;
   conversationHistory.push({ role: "user", content: userAugmentedText });
 
   const gptResponse = await askPillowMate(conversationHistory);
-  if (!gptResponse || typeof gptResponse.text !== "string" || !gptResponse.text.trim()) {
+  if (
+    !gptResponse ||
+    typeof gptResponse.text !== "string" ||
+    !gptResponse.text.trim()
+  ) {
     console.warn("LLM returned no text. Raw response:", gptResponse);
   }
   const replyText =
@@ -223,10 +246,12 @@ async function handleConversationTurn() {
 }
 
 async function mainLoop() {
-  console.log("PillowMate + Action Recognition (inline). Press Ctrl+C to stop.");
+  console.log(
+    "PillowMate + Action Recognition (inline). Press Ctrl+C to stop."
+  );
   await checkDependency(
     process.platform === "win32" ? "sox" : "rec",
-    "brew install sox (macOS) / conda install -c conda-forge sox",
+    "brew install sox (macOS) / conda install -c conda-forge sox"
   );
 
   createActionRecognizer();

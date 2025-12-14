@@ -6,6 +6,14 @@
   "scripts": {
     "start": "node main.js"
   },
+  "overrides": {
+    "firmata": {
+      "serialport": "9.2.8"
+    },
+    "node-pixel": {
+      "serialport": "9.2.8"
+    }
+  },
   "dependencies": {
     "firmata": "^2.2.0",
     "johnny-five": "^2.1.0",

@@ -7,22 +7,21 @@ const DEFAULT_LENGTH = 44;
 export const EMOTION_PATTERN_MAP = {
   // System states
   listening: { color: "#ffd200", pattern: "breathe", interval: 20 },
-  recording: { color: "#1a73ff", pattern: "blink", interval: 500 },
-  processing: { color: "#00e5ff", pattern: "colorWipe", interval: 50 },
-  
+  processing: { color: "#00e5ff", pattern: "breathe", interval: 50 },
+
   // Emotions
-  happy: { color: "#ffb300", pattern: "breathe", interval: 30 },
-  sad: { color: "#1e88e5", pattern: "breathe", interval: 40 },
-  angry: { color: "#ff1744", pattern: "blink", interval: 200 },
+  happy: { color: "#ffb300", pattern: "colorWipe", interval: 200 },
+  sad: { color: "#1e88e5", pattern: "solid", interval: 40 },
+  angry: { color: "#ff1744", pattern: "blink", interval: 500 },
   frustrated: { color: "#ff7043", pattern: "solid" },
   anxious: { color: "#ab47bc", pattern: "blink", interval: 300 },
-  stressed: { color: "#ef5350", pattern: "breathe", interval: 20 },
-  lonely: { color: "#5e35b1", pattern: "breathe", interval: 50 },
+  stressed: { color: "#ef5350", pattern: "solid", interval: 20 },
+  lonely: { color: "#5e35b1", pattern: "solid", interval: 50 },
   tired: { color: "#90a4ae", pattern: "solid" },
   excited: { color: "#00e5ff", pattern: "blink", interval: 150 },
-  relieved: { color: "#66bb6a", pattern: "breathe", interval: 35 },
+  relieved: { color: "#66bb6a", pattern: "colorWipe", interval: 500 },
   neutral: { color: "#ffffff", pattern: "solid" },
-  uncertain: { color: "#bdbdbd", pattern: "breathe", interval: 40 },
+  uncertain: { color: "#bdbdbd", pattern: "solid", interval: 40 },
 };
 
 class NeoPixelController {
@@ -84,7 +83,9 @@ class NeoPixelController {
     this.readyPromise = new Promise((resolve) => {
       const externalBoard = this.options.board;
       if (!externalBoard) {
-        console.error("NeoPixelController requires an existing Johnny-Five board. Call setBoard(board).");
+        console.error(
+          "NeoPixelController requires an existing Johnny-Five board. Call setBoard(board)."
+        );
         this.failed = true;
         resolve(false);
         return;
@@ -114,23 +115,23 @@ class NeoPixelController {
     }
   }
 
-  async setSolid(color) {
-    this.stopCurrentPattern();
-    const ready = await this.ensureReady();
-    if (!ready || !this.strip) return false;
-    try {
-      this.strip.color(color);
-      this.strip.show();
-      this.currentColor = color;
-      return true;
-    } catch (err) {
-      console.error("Failed to set NeoPixel color:", err?.message ?? err);
-      return false;
+  // Check if we are in a solid state (light on, no interval) and fade out if so.
+  async prepareTransition() {
+    // If there is no active pattern interval but the color is NOT off, we are in "solid" state.
+    // In that case, fade out smoothly before starting the new pattern.
+    if (!this.currentPatternInterval && this.currentColor !== "off") {
+      await this.fadeOut(500);
     }
+    this.stopCurrentPattern();
+  }
+
+  async setSolid(color) {
+    // Instead of setting instantly, fade in.
+    return this.fadeIn(color, 500);
   }
 
   async blink(color, intervalMs = 500) {
-    this.stopCurrentPattern();
+    await this.prepareTransition();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
 
@@ -148,7 +149,7 @@ class NeoPixelController {
   }
 
   async colorWipe(color, intervalMs = 50) {
-    this.stopCurrentPattern();
+    await this.prepareTransition();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
 
@@ -181,7 +182,7 @@ class NeoPixelController {
   }
 
   async breathe(color, intervalMs = 20) {
-    this.stopCurrentPattern();
+    await this.prepareTransition();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
 
@@ -190,7 +191,7 @@ class NeoPixelController {
 
     this.currentPatternInterval = setInterval(() => {
       // Create a smooth sine wave for brightness (0.05 to 1.0)
-      const brightness = (Math.sin(tick) + 1) / 2 * 0.95 + 0.05;
+      const brightness = ((Math.sin(tick) + 1) / 2) * 0.95 + 0.05;
 
       const r = Math.floor(rgb.r * brightness);
       const g = Math.floor(rgb.g * brightness);
@@ -208,7 +209,7 @@ class NeoPixelController {
 
   // 서서히 켜지기
   async fadeIn(color, durationMs = 1000) {
-    this.stopCurrentPattern();
+    await this.prepareTransition();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
 
@@ -220,11 +221,11 @@ class NeoPixelController {
     this.currentPatternInterval = setInterval(() => {
       step++;
       const brightness = step / steps; // 선형 증가 (0 -> 1)
-      
+
       const r = Math.floor(rgb.r * brightness);
       const g = Math.floor(rgb.g * brightness);
       const b = Math.floor(rgb.b * brightness);
-      
+
       this.strip.color(`rgb(${r}, ${g}, ${b})`);
       this.strip.show();
 
@@ -234,54 +235,60 @@ class NeoPixelController {
         this.currentColor = color; // 최종 상태 저장
       }
     }, interval);
-    
+
     return true;
   }
 
   // 서서히 꺼지기
   async fadeOut(durationMs = 1000) {
+    // Note: fadeOut does NOT call prepareTransition to avoid recursion.
     this.stopCurrentPattern();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
 
     // 현재 색상을 알 수 없다면 마지막 저장된 색상 사용, 없으면 흰색 가정
     // (node-pixel에서 현재 색상을 읽어오는 건 복잡할 수 있으므로 this.currentColor 활용)
-    const startColor = (this.currentColor && this.currentColor !== 'off') ? this.currentColor : '#ffffff';
+    const startColor =
+      this.currentColor && this.currentColor !== "off"
+        ? this.currentColor
+        : "#ffffff";
     const rgb = this._hexToRgb(startColor);
 
     const steps = 50;
     const interval = durationMs / steps;
     let step = steps;
 
-    this.currentPatternInterval = setInterval(() => {
-      step--;
-      const brightness = step / steps; // 선형 감소 (1 -> 0)
+    // Use a promise to make it awaitable
+    return new Promise((resolve) => {
+      this.currentPatternInterval = setInterval(() => {
+        step--;
+        const brightness = step / steps; // 선형 감소 (1 -> 0)
 
-      const r = Math.floor(rgb.r * brightness);
-      const g = Math.floor(rgb.g * brightness);
-      const b = Math.floor(rgb.b * brightness);
+        const r = Math.floor(rgb.r * brightness);
+        const g = Math.floor(rgb.g * brightness);
+        const b = Math.floor(rgb.b * brightness);
 
-      this.strip.color(`rgb(${r}, ${g}, ${b})`);
-      this.strip.show();
-
-      if (step <= 0) {
-        clearInterval(this.currentPatternInterval);
-        this.currentPatternInterval = null;
-        this.strip.off();
+        this.strip.color(`rgb(${r}, ${g}, ${b})`);
         this.strip.show();
-        this.currentColor = 'off';
-      }
-    }, interval);
 
-    return true;
+        if (step <= 0) {
+          clearInterval(this.currentPatternInterval);
+          this.currentPatternInterval = null;
+          this.strip.off();
+          this.strip.show();
+          this.currentColor = "off";
+          resolve(true);
+        }
+      }, interval);
+    });
   }
 
-  async showRecording() {
-    return this.showEmotion("recording");
-  }
-
-  async showWaiting() {
+  async showListening() {
     return this.showEmotion("listening");
+  }
+
+  async showProcessing() {
+    return this.showEmotion("processing");
   }
 
   async showEmotion(emotion) {
@@ -289,7 +296,7 @@ class NeoPixelController {
     const { color, pattern, interval } = config;
 
     console.log(
-      `NeoPixel showEmotion: emotion=${emotion}, color=${color}, pattern=${pattern}, interval=${interval ?? "n/a"}`,
+      `NeoPixel showEmotion: emotion=${emotion}, color=${color}, pattern=${pattern}, interval=${interval ?? "n/a"}`
     );
 
     switch (pattern) {
@@ -310,7 +317,7 @@ class NeoPixelController {
   }
 
   async off() {
-    this.stopCurrentPattern();
+    await this.prepareTransition();
     const ready = await this.ensureReady();
     if (!ready || !this.strip) return false;
     try {

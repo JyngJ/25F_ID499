@@ -7,7 +7,6 @@
   "license": "ISC",
   "type": "module",
   "overrides": {
-    "serialport": "9.2.8",
     "firmata": {
       "serialport": "9.2.8"
     },
@@ -27,7 +26,7 @@
     "nodeplotlib": "^1.1.2",
     "onnxruntime-node": "^1.23.2",
     "openai": "^6.5.0",
-    "serialport": "9.2.8",
+    "serialport": "^9.2.8",
     "wavefile": "^11.0.0"
   }
 }
