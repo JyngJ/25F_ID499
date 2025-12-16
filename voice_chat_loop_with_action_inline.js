@@ -240,6 +240,10 @@ async function handleConversationTurn() {
     await neoPixel.showEmotion(emotion);
     await runCommand(buildPlaybackCommand(OUTPUT_AUDIO_PATH));
   } finally {
+    if (contextLabel === "wrap_up") {
+      console.log("Wrap-up detected; keeping NeoPixel on for 5s before turning off.");
+      await sleep(5000);
+    }
     await neoPixel.off();
   }
   return contextLabel;

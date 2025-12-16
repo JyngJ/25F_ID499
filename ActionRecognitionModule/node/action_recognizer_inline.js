@@ -181,7 +181,8 @@ export class InlineActionRecognizer {
       sampleMs: 20,
       pressurePin: "A0",
       imuController: "MPU6050",
-      baselineSamples: 200,
+      baselineSamples: 200, // 초기 전역 캘리브레이션
+      recalibrateFrames: 20, // 매 턴 시작 시 앞선 프레임 몇 개로 베이스라인 재보정
       modelPath: path.resolve(moduleRoot, "models", "sequence_classifier_20251201_more.pt"),
       configPath: path.resolve(moduleRoot, "models", "sequence_config_20251201_more.json"),
       inferScript: path.resolve(moduleRoot, "python", "sequence_infer.py"),
@@ -220,6 +221,8 @@ export class InlineActionRecognizer {
     this.latestGyro = null;
     this.frames = [];
     this.capturing = false;
+    this.recalibrating = false;
+    this.recalibrateBuffer = [];
     this.sensorLogTick = 0;
     this.baselines = { pressureBaseline: 0, accelBaseline: 0, gyroBaseline: 0 };
     this.ready = false;
@@ -305,6 +308,31 @@ export class InlineActionRecognizer {
     if (!this.capturing) return;
     if (this.latestPressure == null || !this.latestAccel || !this.latestGyro) return;
 
+    // 턴 시작 후 초기 N프레임으로 베이스라인 재보정
+    if (this.recalibrating) {
+      this.recalibrateBuffer.push({
+        p: this.latestPressure,
+        a: Math.sqrt(this.latestAccel.x ** 2 + this.latestAccel.y ** 2 + this.latestAccel.z ** 2),
+        g: Math.sqrt(this.latestGyro.x ** 2 + this.latestGyro.y ** 2 + this.latestGyro.z ** 2),
+      });
+      if (this.recalibrateBuffer.length >= this.options.recalibrateFrames) {
+        const pMean =
+          this.recalibrateBuffer.reduce((s, v) => s + v.p, 0) / this.recalibrateBuffer.length;
+        const aMean =
+          this.recalibrateBuffer.reduce((s, v) => s + v.a, 0) / this.recalibrateBuffer.length;
+        const gMean =
+          this.recalibrateBuffer.reduce((s, v) => s + v.g, 0) / this.recalibrateBuffer.length;
+        this.baselines = {
+          pressureBaseline: pMean,
+          accelBaseline: aMean,
+          gyroBaseline: gMean,
+        };
+        this.recalibrating = false;
+        this.recalibrateBuffer = [];
+      }
+      return; // 재보정 중에는 학습/추론 프레임에 넣지 않음
+    }
+
     const frame = [
       this.latestPressure - this.baselines.pressureBaseline,
       this.latestAccel.x,
@@ -341,6 +369,8 @@ export class InlineActionRecognizer {
 
   async startTurn() {
     await this.ensureReady();
+    this.recalibrating = true;
+    this.recalibrateBuffer = [];
     this.frames = [];
     this.capturing = true;
     this.sensorLogTick = 0;

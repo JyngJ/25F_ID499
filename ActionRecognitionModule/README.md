@@ -37,7 +37,7 @@ node node/collect_sequences.js \
   --trials 5 \
   --sample-ms 20 \
   --record-seconds 30 \
-  --output data/raw/251210pillowmate_pfix
+  --output data/raw/251214
 ```
 
 - `Enter`로 녹화를 시작하면 지정된 시간(`--record-seconds`, 기본 30초) 동안 자동으로 기록하고 종료합니다. 0을 주면 이전처럼 수동 종료 모드가 됩니다.
@@ -84,15 +84,15 @@ node preprocess_pressure_drop.js \
 ```bash
 cd ActionRecognitionModule/python
 python augment_sequences.py \
-  --data-dir ../data/raw/251209pillowmate_full_many \
+  --data-dir ../data/raw/251214_10 \
   --output-dir ../data/augmented \
-  --ops random_crop time_scale time_shift amplitude_scale \
+  --ops random_crop time_scale amplitude_scale \
   --copies 10 \
   --include-original \
   --split-by-session \
   --time-shift-ratio 0.2 \
   --amplitude-scale-min 0.8 \
-  --amplitude-scale-max 1.2 \
+  --amplitude-scale-max 1.2
 ```
 
 - `--ops`: 적용할 증강 목록. 각 기법의 의미/세부 옵션:
@@ -117,22 +117,22 @@ python augment_sequences.py \
 ```bash
 cd ActionRecognitionModule/python
 python train_sequence_model.py \
-  --data-dir ../data/augmented/251210pillowmate_full \
-  --model-out ../models/251210pillowmate_full.pt \
-  --config-out ../models/251210pillowmate_full.json \
-  --epochs 100 \
+  --data-dir ../data/augmented/251214_10 \
+  --model-out ../models/251214_10.pt \
+  --config-out ../models/251214_10.json \
+  --epochs 200 \
   --val-split 0.30 \
-  --batch-size 32 \
+  --batch-size 4 \
   --hidden-dim 128 \
   --low-pass-window 5 \
   --stop-when-val-acc 0.99 \
   --stop-patience 4 \
   --log-misclassifications \
-  --device cpu \
+  --device mps \
   --exclude-labels idle \
   --wandb \
   --wandb-project pillowmate-gru \
-  --wandb-run-name 251210pillowmate_full
+  --wandb-run-name 251214_10
 ```
 
 - `--data-dir` 옵션은 여러 개를 연속으로 지정할 수 있습니다. 예: `--data-dir ../data/raw/session_A ../data/raw/session_B`.
@@ -271,9 +271,9 @@ ACTION_VERBOSE_LOGS=1 node voice_chat_loop_with_action.js
 
 ```bash
 node node/run_sequence_inference.js \
-  --model models/251210pillowmate_full.pt \
-  --config models/251210pillowmate_full.json \
-  --low-pass-window 5 \
+  --model models/251214pillowmate_full_aug_b32_noLP_moreAug_llr.pt \
+  --config models/251214pillowmate_full_aug_b32_noLP_moreAug_llr.json \
+  --low-pass-window 0 \
   --auto-idle --idle-label idle \
   --idle-pressure-std 20 --idle-pressure-mean 40 \
   --idle-accel-std 0.1 --idle-gyro-std 5 \
@@ -282,5 +282,5 @@ node node/run_sequence_inference.js \
   --activity-gap-merge 100 \
   --activity-weight-pressure 0.000002 --activity-weight-accel 150.0 --activity-weight-gyro 500.0 \
   --activity-plot \
-  --sample-log-every 50
+  --sample-log-every 5
 ```
